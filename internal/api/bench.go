@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -82,6 +85,16 @@ const benchOffMessage = "the benchmark feature is off: set data_dir in the confi
 // benchGuard answers 503 when the feature is off.
 func (s *Server) benchGuard(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if why := s.opts.BenchOffReason; why != "" {
+			// the bench tables are newer than this build: the same 503 as
+			// the feature off, with its reason, enabled false besides
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			b, _ := json.Marshal(map[string]any{"error": map[string]any{"message": why, "type": "server_error", "param": nil,
+				"code": http.StatusServiceUnavailable, "reason": "benchmarks off"}, "enabled": false, "reason": why})
+			w.Write(b)
+			return
+		}
 		if !s.benchOn() {
 			w.Header().Set("Retry-After", "0")
 			proxy.WriteError(w, http.StatusServiceUnavailable, benchOffMessage, "server_error", "benchmarks off", nil)
@@ -198,9 +211,18 @@ func (s *Server) listBenchmarks(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err)
 		return
 	}
+	uses, err := s.opts.BenchStore.LastUses()
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
 	out := make([]any, 0, len(all))
 	for i := range all {
-		out = append(out, benchmarkJSON(&all[i]))
+		m := benchmarkJSON(&all[i])
+		if u := uses[all[i].Spec.ID]; u != nil {
+			m["last_use"] = u
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"benchmarks": out})
 }
@@ -352,6 +374,12 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		if runs, err := s.opts.BenchStore.ListRuns(bench.RunFilter{Suite: all[i].Spec.ID, Limit: 1}); err == nil && len(runs) > 0 {
 			m["last_run"] = runs[0]
 		}
+		if flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup); err == nil {
+			m["expanded_count"] = len(flat.Benchmarks)
+			if n, ok := s.groupTaskCount(flat); ok {
+				m["task_count"] = n
+			}
+		}
 		out = append(out, m)
 	}
 	key := "suites"
@@ -359,6 +387,41 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		key = "groups"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{key: out})
+}
+
+// groupTaskCount is the coding tasks a run of the expanded group sends: per
+// entry, its tasks phases' task sets (stored, at the version the phase names
+// or the newest, or inline). ok is false when no entry has a tasks phase or a
+// named set is not stored.
+func (s *Server) groupTaskCount(flat *benchspec.Suite) (n int, ok bool) {
+	for _, it := range flat.Benchmarks {
+		b := it.Inline
+		if b == nil {
+			var found bool
+			if b, found = s.lookup(it.Ref); !found {
+				continue
+			}
+		}
+		for _, p := range b.Phases {
+			if p.Type != benchspec.PhaseTasks {
+				continue
+			}
+			switch {
+			case p.Tasks != nil:
+				n += len(p.Tasks.Tasks)
+			case p.TaskSet != "":
+				ts, err := s.opts.BenchStore.GetTaskSet(p.TaskSet, p.TaskSetVersion)
+				if err != nil || ts.Set == nil {
+					return 0, false
+				}
+				n += len(ts.Set.Tasks)
+			default:
+				continue
+			}
+			ok = true
+		}
+	}
+	return n, ok
 }
 
 func (s *Server) getSuite(w http.ResponseWriter, r *http.Request) {
@@ -489,7 +552,15 @@ func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state"), Kind: q.Get("kind"), Benchmark: q.Get("benchmark")}
+	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state"), Kind: q.Get("kind"), Benchmark: q.Get("benchmark"), Model: q.Get("model")}
+	if f.Model != "" { // a model file: its steps' file, or for older steps their profile among the file's profiles now
+		cfg := s.conf()
+		for _, id := range slices.Sorted(maps.Keys(cfg.Profiles)) {
+			if p := cfg.Profiles[id]; p.Kind != core.KindCommand && p.Model == f.Model {
+				f.ModelProfiles = append(f.ModelProfiles, id)
+			}
+		}
+	}
 	switch f.Kind {
 	case "", bench.RunKindSuite, bench.RunKindBenchmark:
 	default:
@@ -510,7 +581,19 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Limit = n
 	}
-	runs, err := s.opts.BenchStore.ListRuns(f)
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			badParam(w, "offset must be 0 or more, got %q", v)
+			return
+		}
+		f.Offset = n
+	}
+	if f.Result = q.Get("result"); !bench.ValidResultFilter(f.Result) {
+		badParam(w, "result must be one of %s, got %q", strings.Join(bench.ResultFilters(), ", "), f.Result)
+		return
+	}
+	runs, total, err := s.opts.BenchStore.ListRunsPage(f)
 	if err != nil {
 		s.storeErr(w, err)
 		return
@@ -518,11 +601,27 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	if runs == nil {
 		runs = []bench.Run{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs, "total": total, "offset": f.Offset})
 }
 
+// getRun is GET /api/bench/runs/{id}: {id} is a run id or a run number (all
+// digits); ?requests=0 (or false) leaves out the steps' request rows.
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	run, err := s.opts.BenchStore.GetRun(r.PathValue("id"))
+	withRequests := true
+	if v := r.URL.Query().Get("requests"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			badParam(w, "requests must be 0 or 1 (or false or true), got %q", v)
+			return
+		}
+		withRequests = b
+	}
+	id, err := s.opts.BenchStore.ResolveRunRef(r.PathValue("id"))
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	run, err := s.opts.BenchStore.GetRunOpt(id, withRequests)
 	if err != nil {
 		s.storeErr(w, err)
 		return
@@ -752,6 +851,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	// and failures (the About page's "Background tasks" card).
 	out["tasks"] = supervise.Stats()
 	out["internal_failures_total"] = supervise.Total()
+	// the process's own memory (heap, goroutines, garbage collection), read
+	// at most once per runtimeEvery (sysruntime.go)
+	out["runtime"] = s.rt.figures(time.Now())
 	if sv := s.opts.Config; sv != nil {
 		// fields of the stored configuration this version does not know (a
 		// newer version wrote them): writes are refused unless forced
@@ -764,6 +866,18 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	if s.sched != nil {
 		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
 		out["loop"] = s.sched.LoopStats()         // the core loop's step times (B9), read without the loop
+		// the host-memory term summed over the instances loaded on the
+		// scheduler's machine ONLY (scope says so), where nothing places it
+		// (scheduler hostmem.go), and per console that hosts a loaded model;
+		// the same as /api/status server_host_memory and node_host_memory
+		if st, err := s.sched.Status(r.Context()); err == nil {
+			out["host_memory"] = jsonView(st.ServerHostMemory)
+			nodes := []any{}
+			for _, n := range st.NodeHostMemory {
+				nodes = append(nodes, jsonView(n))
+			}
+			out["node_host_memory"] = nodes
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

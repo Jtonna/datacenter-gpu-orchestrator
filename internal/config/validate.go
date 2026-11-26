@@ -6,7 +6,9 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // managedFlags are the llama-server flags the scheduler sets itself
@@ -30,6 +33,54 @@ var managedFlags = map[string]bool{
 	"-lv": true, "--verbosity": true, "--log-verbosity": true,
 	"-v": true, "--verbose": true, "--log-verbose": true, "--log-disable": true,
 }
+
+// lateManaged are flags the scheduler began to set after profiles could
+// already carry them (--ctx-checkpoints, from the setting ctx_checkpoints).
+// A write may not set them, as with managedFlags; a stored profile that
+// already has them unchanged (Options.KeepArgs) stays loadable, and the
+// launch drops them (StripLateManaged) so the setting is the one value.
+var lateManaged = map[string]string{
+	"--ctx-checkpoints": "ctx_checkpoints", "-ctxcp": "ctx_checkpoints", "--swa-checkpoints": "ctx_checkpoints",
+}
+
+// StripLateManaged is args without the lateManaged flags and their values
+// (the next entry, for a flag written without "=").
+func StripLateManaged(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		name, _, eq := strings.Cut(args[i], "=")
+		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
+			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// LateManagedIn is what StripLateManaged drops from args: each flag with
+// its value as given ("--ctx-checkpoints 3", "-ctxcp=3"), in order.
+func LateManagedIn(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		name, _, eq := strings.Cut(args[i], "=")
+		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
+			d := args[i]
+			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				d += " " + args[i]
+			}
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// LateManagedArgs lists, one sentence each, the stored profiles whose
+// extra_args set a lateManaged flag that the launch drops.
+func (c *Config) LateManagedArgs() []string { return c.lateArgs }
 
 // validate checks every startup rule and returns all violations joined, in
 // a deterministic order.
@@ -113,6 +164,7 @@ func (c *Config) validate(raw map[string]*ProfileSpec, modelOK func(*core.Profil
 		} else if strings.ContainsFunc(d, unicode.IsControl) {
 			pf("description", "must be one line of text (no line breaks or control characters)")
 		}
+		c.validateStage(n, p, pf)
 		switch p.Kind {
 		case core.KindLlama:
 			c.validateLlama(p, raw[n], pf, modelOK)
@@ -137,14 +189,30 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 	}
 	if p.Model == "" {
 		pf("model", "is required")
+	} else if err := modelpath.Check(p.Model); err != nil && !modelOK(p) {
+		pf("model", "%v", err) // the path rule; a stored profile that keeps its path passes (modelCheck)
 	} else if !modelOK(p) {
-		pf("model", "file %q not found under models_dir %q", p.Model, c.ModelsDir)
+		note := ""
+		if c.modelNote != nil {
+			if n := c.modelNote(p.Model); n != "" {
+				note = ": " + n
+			}
+		}
+		pf("model", "file %q not found under models_dir %q%s", p.Model, c.ModelsDir, note)
 	}
 	switch {
 	case r.Ctx == nil:
 		pf("ctx", "is required and must be positive")
 	case *r.Ctx <= 0:
 		pf("ctx", "must be positive, got %d", *r.Ctx)
+	case !p.CtxAboveTrained && c.trainedCtx != nil && modelOK(p):
+		if k, ok := c.keepCtx[p.Name]; ok && k.Model == p.Model && k.Ctx == p.Ctx {
+			break // a stored profile that keeps its model and ctx still loads
+		}
+		if tr, ok := c.trainedCtx(c.modelPath(p)); ok && tr > 0 && p.Ctx > tr {
+			pf("ctx", "ctx %s is above this model's trained context of %s (%s): the model server would run it at %s. Use ctx %s or less, or set ctx_above_trained: true to run it above (the server is then told the model's context is %s)",
+				group(p.Ctx), group(tr), p.Model, group(tr), group(tr), group(p.Ctx))
+		}
 	}
 	if p.Parallel <= 0 {
 		pf("parallel", "must be positive, got %d", p.Parallel)
@@ -202,6 +270,19 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 		}
 		if managedFlags[name] {
 			pf("extra_args", "entry %d %q is a managed flag (%s); the scheduler sets it from the profile", i, a, name)
+		}
+		if setting, ok := lateManaged[name]; ok && strings.HasPrefix(a, "-") {
+			if kept, had := c.keepArgs[p.Name]; had && slices.Equal(kept, p.ExtraArgs) {
+				val := a
+				if _, v, eq := strings.Cut(a, "="); eq {
+					val = name + " " + v
+				} else if i+1 < len(p.ExtraArgs) {
+					val = name + " " + p.ExtraArgs[i+1]
+				}
+				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes --ctx-checkpoints from the setting %s on every launch; remove it from the profile", p.Name, val, setting))
+				continue
+			}
+			pf("extra_args", "entry %d %q sets %s, which the scheduler passes on every launch from the setting %s; remove it here and change the setting instead", i, a, name, setting)
 		}
 	}
 }
@@ -320,7 +401,8 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	}{{"device_overhead_mib", d.DeviceOverheadMiB}, {"min_share_mib", d.MinShareMiB}, {"cache_ram_mib", d.CacheRAMMiB},
 		{"load_memory_floor_mib", d.LoadMemoryFloorMiB}, {"fill_reserve_kib_per_token", d.FillReserveKiBPerToken},
 		{"reserved_drift_warn_mib", d.ReservedDriftWarnMiB}, {"margin_measured_mib", d.MarginMeasuredMiB},
-		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}, {"placement_tolerance_mib", d.PlacementToleranceMiB}} {
+		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}, {"placement_tolerance_mib", d.PlacementToleranceMiB},
+		{"node_host_cache_ram_mib", d.NodeHostCacheRAMMiB}, {"ctx_checkpoints", d.CtxCheckpoints}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}
@@ -376,6 +458,9 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if n := utf8.RuneCountInString(c.DefaultUserName); n < 1 || n > MaxDefaultUserName || strings.TrimSpace(c.DefaultUserName) != c.DefaultUserName ||
 		strings.IndexFunc(c.DefaultUserName, unicode.IsControl) >= 0 {
 		add("default_user_name: must be 1 to %d characters without control characters or surrounding spaces, got %q", MaxDefaultUserName, c.DefaultUserName)
+	}
+	if c.ModelTrashDays < 1 || c.ModelTrashDays > MaxModelTrashDays {
+		add("model_trash_days: must be from 1 to %d, got %d", MaxModelTrashDays, c.ModelTrashDays)
 	}
 	if c.ModelsDiskBudgetGB < 0 {
 		add("models_disk_budget_gb: must not be negative, got %d", c.ModelsDiskBudgetGB)
@@ -525,4 +610,22 @@ func (c *Config) validateLogs(add func(string, ...any)) {
 			add("logs_push_url must be empty or an http:// or https:// address without a user or a fragment, got %q", l.PushURL)
 		}
 	}
+}
+
+// group writes n with thousands separators (8192 -> "8,192").
+func group(n int) string {
+	s := strconv.Itoa(n)
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	if neg {
+		return "-" + b.String()
+	}
+	return b.String()
 }

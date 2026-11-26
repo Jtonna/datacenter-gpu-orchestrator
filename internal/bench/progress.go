@@ -386,7 +386,7 @@ func (m *Manager) progressDoc(ar *activeRun) map[string]any {
 			pct = sumPct / float64(len(tracks))
 		}
 		current = map[string]any{"index": ar.cur, "benchmark_id": it.id, "name": it.name, "description": it.desc, "profile": it.profile,
-			"model_file": strings.Join(model, ", "), "nodes": nonNilStrings(nodes), "percent": round1(pct)}
+			"model_file": strings.Join(model, ", "), "nodes": nonNilStrings(nodes), "percent": round1(pct), "placement": it.placement()}
 		if lead != nil {
 			current["phase"] = lead.phaseDoc()
 			d := map[string]any{}
@@ -483,6 +483,12 @@ func (m *Manager) progressDoc(ar *activeRun) map[string]any {
 	if current != nil {
 		doc["current"] = current
 	}
+	counts := ar.counts
+	counts.Steps = max(ar.total, counts.Done)
+	if !final {
+		counts.ToGo = max(counts.Steps-counts.Done, 0)
+	}
+	doc["counts"] = counts
 	if ar.paused != "" {
 		doc["paused_because"] = ar.paused
 	}

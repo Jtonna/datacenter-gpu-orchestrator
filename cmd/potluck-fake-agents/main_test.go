@@ -26,6 +26,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
 
@@ -105,13 +106,14 @@ func startScheduler(t *testing.T, agentPort, workerPort int) string {
 	return srv.URL
 }
 
+// freeLoopbackPort is a port on the second loopback address that a fake
+// agent binds later: outside the ephemeral range (testutil/ports).
 func freeLoopbackPort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.2:0")
+	p, err := ports.FreeOn("127.0.0.2")
 	if err != nil {
 		t.Skipf("no second loopback address on this machine: %v", err)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return p
 }
 
 func getMap(t *testing.T, url string) map[string]any {
@@ -242,7 +244,21 @@ func TestAcceptLaunches(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("launch: %d", resp.StatusCode)
 	}
-	eventually(t, "the fake worker ready", func() bool { return f.Agents[0].LaunchState().State == agentproto.StateReady })
+	// The fake agent marks the launch ready once its worker port answers a
+	// TCP dial (fakeagent becomeReady): 0.16 s alone, but under a full
+	// parallel race run the machine can stall for seconds. Wait on that
+	// condition with a generous bound, and say the last state seen.
+	var last agentproto.LaunchState
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if last = f.Agents[0].LaunchState(); last.State == agentproto.StateReady {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the fake worker did not become ready in 60 s (launch l1 state %q, port %d): the agent dials its worker port before it marks the launch ready", last.State, last.Port)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // --from-status mirrors the headline temperature of each node's stats; a
@@ -311,3 +327,86 @@ func postPlan(t *testing.T, base, model string) map[string]any {
 }
 
 func toJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+// --mem-file: a node listed by name reports the figure from the next
+// heartbeat on (a scripted memory drop for a context fill's stop line).
+func TestMemFileDropsANodesMemory(t *testing.T) {
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
+	base := startScheduler(t, agentPort, workerPort)
+	nodes := []Node{{ID: "02:00:00:00:00:01", Name: "ps5-a"}, {ID: "02:00:00:00:00:02", Name: "ps5-b"}}
+	for i := range nodes {
+		fillDefaults(&nodes[i])
+	}
+	assignAddrs(nodes, "127.0.0.2")
+	file := filepath.Join(t.TempDir(), "mem.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	f, err := Start(ctx, Options{Scheduler: base, Release: "auto", AgentPort: agentPort, WorkerPort: workerPort,
+		Heartbeat: 100 * time.Millisecond, MemFile: file}, nodes, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
+	avail := func(name string) any {
+		for _, x := range getMap(t, base+"/api/status")["agents"].([]any) {
+			if a := x.(map[string]any); a["name"] == name {
+				return a["mem_available_mib"]
+			}
+		}
+		return nil
+	}
+	eventually(t, "both at the start figure", func() bool { return avail("ps5-a") == float64(15000) && avail("ps5-b") == float64(15000) })
+	os.WriteFile(file, []byte(`{"ps5-b": 1500}`), 0o644)
+	eventually(t, "ps5-b dropped", func() bool { return avail("ps5-b") == float64(1500) })
+	if avail("ps5-a") != float64(15000) {
+		t.Fatalf("ps5-a moved: %v", avail("ps5-a"))
+	}
+}
+
+// --mem-file "silent:<name>": N withholds that agent's reports for N s,
+// taking effect within the file's 100 ms poll (not at the next heartbeat),
+// and the agent reports at once when the silence ends; the other agent
+// keeps reporting.
+func TestMemFileSilentWithholdsReports(t *testing.T) {
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
+	base := startScheduler(t, agentPort, workerPort)
+	nodes := []Node{{ID: "02:00:00:00:00:01", Name: "ps5-a"}, {ID: "02:00:00:00:00:02", Name: "ps5-b"}}
+	for i := range nodes {
+		fillDefaults(&nodes[i])
+	}
+	assignAddrs(nodes, "127.0.0.2")
+	file := filepath.Join(t.TempDir(), "mem.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	f, err := Start(ctx, Options{Scheduler: base, Release: "auto", AgentPort: agentPort, WorkerPort: workerPort,
+		Heartbeat: time.Second, MemFile: file}, nodes, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
+	ago := func(name string) float64 {
+		for _, x := range getMap(t, base+"/api/status")["agents"].([]any) {
+			if a := x.(map[string]any); a["name"] == name {
+				v, _ := a["last_seen_ago_s"].(float64)
+				return v
+			}
+		}
+		return -1
+	}
+	// Write the silence just after a report of ps5-b: its next one is due about 1 s later.
+	eventually(t, "ps5-b just reported", func() bool { a := ago("ps5-b"); return a >= 0 && a < 0.1 })
+	wrote := time.Now()
+	os.WriteFile(file, []byte(`{"silent:ps5-b": 2}`), 0o644)
+	time.Sleep(time.Until(wrote.Add(1600 * time.Millisecond)))
+	if a := ago("ps5-b"); a < 1.3 { // a report at the 1 s tick would make this about 0.6
+		t.Fatalf("ps5-b reported during its silence: last seen %.2f s ago, 1.6 s after the write", a)
+	}
+	if a := ago("ps5-a"); a > 1.2 {
+		t.Fatalf("ps5-a went silent too: %v", a)
+	}
+	// The silence ends about 2.1 s after the write: a report goes out at once.
+	time.Sleep(time.Until(wrote.Add(2500 * time.Millisecond)))
+	if a := ago("ps5-b"); a > 0.45 {
+		t.Fatalf("ps5-b did not report at once after its silence: last seen %.2f s ago, 2.5 s after the write", a)
+	}
+}

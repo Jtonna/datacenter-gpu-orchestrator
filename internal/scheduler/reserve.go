@@ -181,7 +181,7 @@ type reservedShare struct {
 	ID         core.NodeID
 	Weights    int // the node's share of the model file
 	Context    int // the rest of its share: KV cache, compute buffers, overhead
-	Host       int // host_overhead_mib when the node hosts the load (in Context too); 0 otherwise
+	Host       int // host_overhead_mib when the node hosts the load (in Context too), plus the counted host-memory term (hostmem.go); 0 otherwise
 	Fill       int // the fill reserve (0 when a peak is used, or the reserve is off)
 	Total      int // Weights + Context + Fill
 	Basis      string
@@ -292,11 +292,32 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 // is measured against it (measured use, peaks).
 func (c *schedCore) recordBaseFree(in *inst) {
 	in.baseFree = map[core.NodeID]int{}
+	in.baseUnsettled = map[core.NodeID]bool{}
 	for _, pn := range in.placement.Nodes {
+		if c.unsettledBase(pn.ID) {
+			in.baseUnsettled[pn.ID] = true
+		}
 		if n, ok := c.raw[pn.ID]; ok && !n.FreeUnknown {
 			in.baseFree[pn.ID] = n.FreeMiB
 		}
 	}
+	in.planned, _ = c.reservedShares(in.prof, in.placement) // peakcycle.go: reported only
+}
+
+// unsettledBase: an instance that ran left node id less than one
+// free_average_window ago (at least releaseGrace): the memory it held may
+// still be on its way back, so a free figure taken now is not a base an
+// overhead reading can trust.
+func (c *schedCore) unsettledBase(id core.NodeID) bool {
+	ns := c.nodes[id]
+	if ns == nil || ns.releasedAt.IsZero() {
+		return false
+	}
+	w := c.cfg.Defaults.FreeAverageWindow
+	if w <= 0 {
+		w = releaseGrace
+	}
+	return c.now.Before(ns.releasedAt.Add(w))
 }
 
 // measuredUse is what node id gives up for instance in now: its free figure
@@ -318,11 +339,10 @@ func (c *schedCore) measuredUse(in *inst, id core.NodeID) (int, bool) {
 // for it in this load-to-unload cycle (in.cyclePeak). Nothing is stored
 // while the cycle runs: endPeakCycle commits the cycle's peaks when it ends,
 // so the reservation of a loaded instance stays the one it was placed with
-// and its drift shows. Only with the reserve on (review N1).
+// and its drift shows. The cycle's peaks are tracked with the reserve off
+// too, for the instanceUnloaded event only (peakcycle.go); they are stored
+// and used only with the reserve on (endPeakCycle, review N1).
 func (c *schedCore) trackPeaks() {
-	if !c.reserveOn() {
-		return
-	}
 	for _, in := range c.insts {
 		if in.state != stReady && in.state != stDraining {
 			continue
@@ -335,6 +355,7 @@ func (c *schedCore) trackPeaks() {
 				in.cyclePeak[pn.ID] = max(in.cyclePeak[pn.ID], used)
 			}
 		}
+		c.noteSettleUse(in) // peakcycle.go
 	}
 }
 
@@ -541,7 +562,9 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 		e := PlanMemoryNode{ID: pn.ID, Node: nodeLabel(pn.ID, n), Shared: n.SharedMemory, TotalMiB: n.TotalMiB,
 			WeightsMiB: r.Weights, ContextMiB: r.Context, FillReserveMiB: r.Fill, WillTakeMiB: r.Total, Basis: r.Basis,
 			FreeNowMiB: c.freeMiB(pn.ID, n), HeadroomMiB: n.HeadroomMiB, MarginMiB: r.Margin, MarginRule: r.MarginRule,
-			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n), HostOverheadMiB: r.Host}
+			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n)}
+		e.HostMemoryMiB = c.hostTermOn(p, pl, pn.ID) // hostmem.go: 0 unless count_host_memory
+		e.HostOverheadMiB = r.Host - e.HostMemoryMiB
 		if h := hostOf(p, pl); h != "" && h == pn.ID {
 			_, e.HostOverheadSource, e.HostOverheadMeasuredAt = c.hostOverheadOf(p, pn.ID, len(pl.Nodes)) // hostoverhead.go
 		}

@@ -151,7 +151,7 @@ profiles:                  # what clients can ask for; the key is the model name
 #   enabled: true              # default true when data_dir is set
 #   regress_load_pct: 15       # a load this much slower than the baseline run's is flagged as a regression
 #   regress_decode_pct: 7      # decode tokens/s this much lower than the baseline's is flagged
-#   max_run_minutes: 240       # a run that takes longer is stopped and marked failed
+#   max_run_minutes: 720       # a run that takes longer is stopped and marked failed
 #   retention_days: 0          # 0 (default) is off: nothing is removed; N trims finished runs older than N days (requests and transcripts go, measurements stay); pinned runs stay
 #   benchmarks:
 #     - id: qwen-cold          # a slug: letters, digits, . - _

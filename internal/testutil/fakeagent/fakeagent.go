@@ -73,7 +73,9 @@ type Agent struct {
 	// HostPort is where a host launch's fake llama-server listens (phase 6);
 	// a host launch is taken only when Capabilities holds host_launch and
 	// HostPort is set, else it is refused with invalid_request as an agent
-	// of release 0.1.6 would.
+	// of release 0.1.6 would. AutoPort: the launch binds port 0 and the
+	// launch state reports the port it got (HostPortNow): no port is picked
+	// first and bound later, so no other test can take it in between.
 	HostPort int
 
 	mu         sync.Mutex
@@ -89,7 +91,10 @@ type Agent struct {
 	cur        *launchRun
 	stopLaunch []string
 	launches   []agentproto.LaunchRequest // every accepted launch request
+	hostBound  int                        // the port a host launch with AutoPort bound
 	hostAuth   []string                   // the Authorization header of each request to a host launch
+	silentTo   time.Time                  // no heartbeat is sent before this (SilentFor)
+	kick       chan struct{}              // sends a heartbeat at once (the end of a silence)
 }
 
 type launchRun struct {
@@ -283,6 +288,7 @@ func (a *Agent) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-a.kickC(): // a withheld report ends: report at once (SilentFor)
 		}
 	}
 }
@@ -294,10 +300,12 @@ func (a *Agent) register(ctx context.Context) bool {
 		id := a.cur.req.LaunchID
 		lid = &id
 	}
+	// the slices are copied under a.mu: the request is marshalled after the
+	// lock is released (post), and a setter may change the agent meanwhile
 	req := agentproto.RegisterRequest{ID: a.ID, Name: a.Name, AgentRelease: a.Release, AgentStartID: a.StartID,
-		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: a.GPUs, Backends: a.Backends,
+		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: slices.Clone(a.GPUs), Backends: slices.Clone(a.Backends),
 		MemTotalMiB: a.memTotal(), ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
-		LaunchID: lid, ForeignProcesses: a.Foreign, WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: a.Capabilities}
+		LaunchID: lid, ForeignProcesses: slices.Clone(a.Foreign), WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: slices.Clone(a.Capabilities)}
 	a.mu.Unlock()
 	req.FillEmpty()
 	var ans agentproto.RegisterAnswer
@@ -323,18 +331,27 @@ func (a *Agent) register(ctx context.Context) bool {
 
 func (a *Agent) heartbeat(ctx context.Context) int {
 	a.mu.Lock()
+	if time.Now().Before(a.silentTo) { // a withheld report (SilentFor)
+		a.mu.Unlock()
+		return http.StatusOK
+	}
+	// Everything the body holds is copied under a.mu: json.Marshal runs in
+	// post, after the lock is released, while SetMemAvail may write
+	// a.Devices[i].FreeMiB (the data race the Linux race run found when the
+	// body held a.Devices itself).
+	devices := slices.Clone(a.Devices)
+	if devices == nil {
+		devices = []agentproto.Device{}
+	}
 	hb := map[string]any{"agent_start_id": a.StartID, "seq": time.Now().UnixNano(), "uptime_s": 1.0,
 		"role": agentproto.RoleIdle, "launch_id": nil, "programs_ready": true, "programs_error": nil,
 		"model_source": map[string]any{"kind": "share", "reachable": true, "checked_age_s": 1.0},
-		"devices":      a.Devices, "mem_available_mib": a.MemAvail}
-	if a.Devices == nil {
-		hb["devices"] = []agentproto.Device{}
-	}
+		"devices":      devices, "mem_available_mib": a.MemAvail}
 	if a.cur != nil && a.cur.state != agentproto.StateExited {
 		hb["role"], hb["launch_id"] = roleOf(a.cur.req), a.cur.req.LaunchID
 	}
 	if a.Stats != nil {
-		hb["stats"] = a.Stats
+		hb["stats"] = slices.Clone(a.Stats)
 	}
 	if a.WatchdogFloorMiB > 0 {
 		hb["watchdog_floor_mib"] = a.WatchdogFloorMiB
@@ -624,7 +641,8 @@ func (a *Agent) stateLocked() agentproto.LaunchState {
 	st := agentproto.LaunchState{LaunchID: r.req.LaunchID, Role: agentproto.RoleWorker, State: r.state,
 		Port: a.WorkerPort, Command: []string{"rpc-server"}, Exit: r.exit, MemAvailableMiB: a.MemAvail}
 	if r.req.Role == agentproto.RoleHost {
-		st.Role, st.Port, st.Command = agentproto.RoleHost, a.HostPort, []string{"llama-server", "--port", strconv.Itoa(a.HostPort)}
+		port := a.hostPortLocked()
+		st.Role, st.Port, st.Command = agentproto.RoleHost, port, []string{"llama-server", "--port", strconv.Itoa(port)}
 	}
 	if r.state != agentproto.StateExited {
 		ttl := r.req.LeaseTTLS
@@ -659,12 +677,17 @@ func roleOf(req agentproto.LaunchRequest) string {
 // answers /health without a key and everything else only with the launch's
 // key, and writes the buffer lines a real host writes at -lv 4.
 func (a *Agent) startHostLocked(w http.ResponseWriter, req agentproto.LaunchRequest) {
-	addr := net.JoinHostPort(a.Addr, strconv.Itoa(a.HostPort))
-	ln, err := net.Listen("tcp", addr)
+	port := a.HostPort
+	if port == AutoPort {
+		port = 0
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(a.Addr, strconv.Itoa(port)))
 	if err != nil {
 		writeJSON(w, 409, agentproto.LaunchRefusal{Reason: agentproto.ReasonPortInUse, Message: err.Error()})
 		return
 	}
+	a.hostBound = ln.Addr().(*net.TCPAddr).Port
+	addr := net.JoinHostPort(a.Addr, strconv.Itoa(a.hostBound))
 	key := req.Host.APIKey
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -697,6 +720,24 @@ func (a *Agent) startHostLocked(w http.ResponseWriter, req agentproto.LaunchRequ
 	writeJSON(w, http.StatusAccepted, a.stateLocked())
 }
 
+// AutoPort as Agent.HostPort: a host launch binds port 0 (see HostPort).
+const AutoPort = -1
+
+// HostPortNow is the port of the host launch: the one bound under
+// AutoPort (0 before any host launch), else HostPort.
+func (a *Agent) HostPortNow() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hostPortLocked()
+}
+
+func (a *Agent) hostPortLocked() int {
+	if a.HostPort == AutoPort {
+		return a.hostBound
+	}
+	return a.HostPort
+}
+
 // Launches are the launch requests the agent accepted, in order.
 func (a *Agent) Launches() []agentproto.LaunchRequest {
 	a.mu.Lock()
@@ -710,4 +751,52 @@ func (a *Agent) HostAuth() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.hostAuth...)
+}
+
+// SetMemAvail changes the agent's MemAvailable from the next heartbeat on,
+// with the free figure of its devices that share system memory, and the
+// stats object when stats is not nil (a scripted memory drop). It writes
+// under a.mu, into a new Devices slice (never the array a caller or a
+// body being sent may hold), and keeps its own copy of stats.
+func (a *Agent) SetMemAvail(mib int64, stats json.RawMessage) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.MemAvail = mib
+	devices := slices.Clone(a.Devices)
+	for i := range devices {
+		if devices[i].SharesSystemMemory {
+			devices[i].FreeMiB = mib
+		}
+	}
+	a.Devices = devices
+	if stats != nil {
+		a.Stats = slices.Clone(stats)
+	}
+}
+
+// SilentFor withholds the agent's heartbeats for d from now (its memory
+// report is then as old as its last heartbeat), as an agent that misses a
+// report does, and sends one at once when the silence ends, so the gap
+// the scheduler sees is d plus the time since the last report. Kept short
+// of the pool's LostAfter by the caller.
+func (a *Agent) SilentFor(d time.Duration) {
+	a.mu.Lock()
+	a.silentTo = time.Now().Add(d)
+	a.mu.Unlock()
+	k := a.kickC()
+	time.AfterFunc(d, func() {
+		select {
+		case k <- struct{}{}:
+		default:
+		}
+	})
+}
+
+func (a *Agent) kickC() chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.kick == nil {
+		a.kick = make(chan struct{}, 1)
+	}
+	return a.kick
 }

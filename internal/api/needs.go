@@ -36,6 +36,9 @@ type needRow struct {
 	// UntrustedReason says why a row is not trusted ("" when it is).
 	UntrustedReason string   `json:"untrusted_reason"`
 	Profiles        []string `json:"profiles"`
+	// Scopes: the scope of the run-scoped load that measured the row
+	// (measured_by is then a scoped name, <id>@<scope>); empty otherwise.
+	Scopes []string `json:"scopes"`
 }
 
 func needRowJSON(r scheduler.LearnedRow) needRow {
@@ -48,6 +51,10 @@ func needRowJSON(r scheduler.LearnedRow) needRow {
 	}
 	if out.Profiles == nil {
 		out.Profiles = []string{}
+	}
+	out.Scopes = []string{}
+	if _, scope, ok := scheduler.SplitScoped(r.MeasuredBy); ok {
+		out.Scopes = append(out.Scopes, scope)
 	}
 	for _, id := range r.Placement {
 		out.Placement = append(out.Placement, string(id))
@@ -145,7 +152,20 @@ func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 		"host_overhead_setting_only": doc.HostOverheadSettingOnly,
 		"device_overheads":           devices, "device_overhead_setting_mib": doc.DeviceOverheadSettingMiB,
 		"device_overhead_setting_only": doc.DeviceOverheadSettingOnly,
-		"derivation_check":             map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
+		"derivation_check":             map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs},
+		"peak_cycles":                  s.peaks.viewWith(s.profileShapes())}) // peakcycles.go: collected only
+}
+
+// profileShapes is the set of shapes the profiles in force have
+// (peak_cycles' no_profile).
+func (s *Server) profileShapes() map[string]bool {
+	out := map[string]bool{}
+	if c := s.conf(); c != nil {
+		for _, p := range c.Profiles {
+			out[scheduler.ShapeOf(p)] = true
+		}
+	}
+	return out
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in

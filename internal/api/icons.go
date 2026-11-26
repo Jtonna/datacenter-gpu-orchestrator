@@ -161,10 +161,18 @@ func (s *Server) handleIconGet(w http.ResponseWriter, r *http.Request, key strin
 }
 
 // brandOfKey is the family of a catalog key ("" when the catalog cannot say).
+// A family comes from the file, not from the status, so any catalog that
+// lists the key says it: the one held is used, and only a key it does not
+// list asks catalogGet. (catalogGet computes every profile's plan again when
+// the status moved since the last build: every avatar of a page that showed
+// a family's icon made one page open cost a second round of plans.)
 func (s *Server) brandOfKey(ctx context.Context, key string) string {
-	snap, err := s.catalogGet(ctx)
-	if err != nil {
-		return ""
+	snap, _ := s.catalog.current()
+	if snap == nil || snap.raw[key] == nil {
+		var err error
+		if snap, err = s.catalogGet(ctx); err != nil {
+			return ""
+		}
 	}
 	var e struct {
 		Brand string `json:"brand"`
@@ -257,10 +265,16 @@ func iconAuditTarget(storeKey, key string) string {
 // configuration document (an icon, an agent) and returns its id (0 when the
 // log is not available or the write failed: the change itself was made).
 func (s *Server) recordAudit(r *http.Request, action, section, target string, before, after any) int64 {
+	return s.recordAuditWith(r, "", action, section, target, before, after)
+}
+
+// recordAuditWith is recordAudit with a comment from the body (the
+// X-Comment header fills it when empty).
+func (s *Server) recordAuditWith(r *http.Request, comment, action, section, target string, before, after any) int64 {
 	if s.opts.Audit == nil {
 		return 0
 	}
-	e := audit.Entry{Action: action, Section: section, Target: target, Before: raw(before), After: raw(after), TS: time.Now().UnixMilli()}
+	e := audit.Entry{Action: action, Section: section, Target: target, Before: raw(before), After: raw(after), TS: time.Now().UnixMilli(), Comment: comment}
 	audit.FromRequest(r).Apply(&e)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

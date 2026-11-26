@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
@@ -98,6 +99,11 @@ func (p phase) String() string {
 
 // inst is one instance (design 8.1). At most one per profile.
 type inst struct {
+	// The context per slot its server runs with (/props, read once after the
+	// load: realctx.go servedCtx); 0 until read or when it could not be read
+	// (ctxErr then says why).
+	servedCtx int
+	ctxErr    string
 	// tight are the nodes of a tight fit (tight.go): the load fits them
 	// without its margin only. Empty for any other load.
 	tight     []PlanMemoryNode
@@ -171,18 +177,46 @@ type inst struct {
 	// requests end with it (a host on a node that went away leaves no
 	// connection to break).
 	gone chan struct{}
+	// cutBy is set, before the instance is killed on purpose with requests
+	// in flight (a forced unload), to the answer those requests get: 503
+	// unloaded, saying why. Their leases read it (Lease.CutBy) when the
+	// model server's connection breaks. Nil: never cut on purpose.
+	cutBy *atomic.Pointer[Error]
 
 	// baseFree is each node's free figure when the instance was created
 	// (reserve.go): what the node gives up for it is measured against it.
 	baseFree map[core.NodeID]int
+	// baseUnsettled: the nodes an instance that ran left within one
+	// free_average_window before this one was created; their base may still
+	// show it, so no overhead reading is taken there (unsettledBase).
+	baseUnsettled map[core.NodeID]bool
 	// cyclePeak is the most each node gave up for this instance in this
 	// load-to-unload cycle (reserve.go, endPeakCycle).
 	cyclePeak map[core.NodeID]int
+	// settleUse is what each node gave up for this instance one
+	// free_average_window after ready (settleWhy: why a node has none);
+	// settleTaken once the reading was made. Collected for the
+	// instanceUnloaded event only (peakcycle.go); never read for a decision.
+	settleUse   map[core.NodeID]int
+	settleWhy   map[core.NodeID]string
+	settleTaken bool
+	// planned is what the plan reserved on each node of the placement when
+	// the instance was created, in placement order; nil when the need was
+	// not known. Reported in the instanceUnloaded event beside the cycle's
+	// peaks (peakcycle.go); never read for a decision.
+	planned []reservedShare
 	// hostMeasured: the host overhead of this cycle was read (or found out
 	// of range); hostHigh is the most the host took on its node in the
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
+	// launchNote: what the launch changed from the profile as stored (a
+	// checkpoint flag of its own dropped in favour of the setting;
+	// noteDroppedCkptFlag); shown in the instance's status.
+	launchNote string
+	// ckptChecked: bit 1 the recurrent state, bit 2 the first checkpoint,
+	// compared with the formula (hostmem.go checkHostMemorySizes).
+	ckptChecked int
 	// devMeasured: the per-device overheads of this cycle were read
 	// (deviceoverhead.go).
 	devMeasured bool
@@ -220,8 +254,9 @@ type waiter struct {
 	arrived   time.Time
 	reply     chan answer // nil for synthetic waiters
 	answered  bool
-	benchRun  string   // X-Bench-Run id of the benchmark run that sent it; only tags history records
-	pin       []string // pin.go: load on these nodes only, for this load
+	benchRun  string        // X-Bench-Run id of the benchmark run that sent it; only tags history records
+	pin       []string      // pin.go: load on these nodes only, for this load
+	scoped    *core.Profile // scoped.go: a scoped load; made current under its name on arrival
 }
 
 // grant is a successful admission.
@@ -232,11 +267,15 @@ type grant struct {
 	Profile string
 	Alias   bool
 	Gone    <-chan struct{} // closed when the instance is removed
+	CutBy   func() *Error   // why the instance was stopped on purpose; nil when it was not
 	// Where the request runs, for the request log: the instance, its load
 	// session and its machines with their roles (shared, never modified).
 	Instance uint64
 	Session  string
 	Nodes    []LeaseNode
+	// Ctx is the context per slot the instance runs with: its server's own
+	// figure once read (/props), else the planned one (realctx.go).
+	Ctx int
 }
 
 type answer struct {
@@ -381,12 +420,16 @@ type schedCore struct {
 	leases       map[uint64]*lease
 	runAvg       map[string]time.Duration        // drain.go: average run length per profile
 	pins         map[*core.Profile][]string      // pin.go: one-off copies of a profile and their nodes
+	scoped       map[string]*core.Profile        // scoped.go: run-scoped profiles by scoped name
 	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
 	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
 	derive       deriveState                     // what the derivation keeps between calls (derive.go)
 	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
 	hostOHs      map[hostKey]*hostOH             // measured host overheads by shape, node and device count (hostoverhead.go)
 	devOHs       map[hostKey]*hostOH             // measured per-device overheads by shape, node and device count (deviceoverhead.go)
+	devEventsFn  DeviceHistory                   // loadFinished and per-device learnedNeed events, read once at start (dropCachedDevice)
+	devChecked   bool                            // dropCachedDevice ran
+	devCheckFrom time.Time                       // when dropCachedDevice first saw a node (it waits for the rows' nodes)
 	hostEventsFn HostReadingEvents               // the history's learnedNeed events, read once for the rows of the release before device counts
 	hostEvents   []history.Event                 // what hostEventsFn returned (nil: not read yet)
 	persist      bool                            // a need store is attached: learned needs are queued for it
@@ -430,10 +473,15 @@ type schedCore struct {
 	feedSeq uint64
 
 	// History (history.go).
-	hist        []history.Event
-	memNext     map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
-	lastRefusal map[string]RefusalStatus  // newest recorded refusal per profile (status only; not deduplicated)
-	refused     map[string]*refusal       // last recorded refusal per profile and reason
+	hist    []history.Event
+	memNext map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
+	// ckptSeen is, per model file version and context per slot, the
+	// largest context checkpoint the server logged this run, for a model
+	// without an exact checkpoint rule (hostmem.go); memory only, gone at a
+	// restart.
+	ckptSeen    map[ckptKey]ckptLogged
+	lastRefusal map[string]RefusalStatus // newest recorded refusal per profile (status only; not deduplicated)
+	refused     map[string]*refusal      // last recorded refusal per profile and reason
 	viewSeen    bool
 	viewFresh   bool
 	viewConn    bool
@@ -454,10 +502,13 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 	if log == nil {
 		log = slog.Default()
 	}
+	if tr, ok := needs.(trainedCtxReader); ok {
+		cfg = realCtx(cfg, tr) // realctx.go: planned at the trained context
+	}
 	return &schedCore{
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
-		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{}, runAvg: map[string]time.Duration{}, pins: map[*core.Profile][]string{},
+		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{}, runAvg: map[string]time.Duration{}, pins: map[*core.Profile][]string{}, scoped: map[string]*core.Profile{},
 		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{}, steady: map[core.NodeID]int{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},
@@ -766,4 +817,23 @@ func (c *schedCore) emitState(in *inst, s RunningState) {
 			e.ReadySince = in.readyAt
 		}
 	})
+}
+
+// markCut records the answer for in's requests in flight before in is
+// killed on purpose; the first reason given stays.
+func (in *inst) markCut(e *Error) {
+	if in.cutBy != nil {
+		in.cutBy.CompareAndSwap(nil, e)
+	}
+}
+
+// cutReader is what a lease reads: the answer markCut recorded, or nil.
+func (in *inst) cutReader() func() *Error {
+	p := in.cutBy
+	return func() *Error {
+		if p == nil {
+			return nil
+		}
+		return p.Load()
+	}
 }

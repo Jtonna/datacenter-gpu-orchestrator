@@ -85,6 +85,26 @@ type Config struct {
 	// health summary's Storage row then also judges the model files against
 	// it. 0 (the default) judges the real free space only.
 	ModelsDiskBudgetGB int
+	// ModelTrashDays is how long a deleted model file is kept in the trash
+	// before the clearing may remove it. A file's clearing date is the later
+	// of the date set when it was deleted and its deletion time plus this
+	// many days: raising it keeps every file longer, lowering it applies to
+	// files deleted from then on only. 1 to MaxModelTrashDays, default 30.
+	ModelTrashDays int
+	// ModelTrashPurge turns the timed clearing of the models trash on
+	// (models slice 4). Off (the default): nothing but "Remove for good"
+	// removes files from the trash.
+	ModelTrashPurge bool
+	// modelNote is Options.ModelNote while the configuration is checked.
+	modelNote func(string) string
+	// keepArgs is Options.KeepArgs while the configuration is checked;
+	// lateArgs what the check let through for it (LateManagedArgs).
+	keepArgs map[string][]string
+	lateArgs []string
+	// trainedCtx and keepCtx are Options.TrainedCtx and KeepCtx while the
+	// configuration is checked.
+	trainedCtx func(string) (int, bool)
+	keepCtx    map[string]KeptCtx
 	// DefaultUserName is the default user: the name that signs what is done
 	// without an access key and without a name of the client's own (the web
 	// UI, curl, scripts) in the audit log and the request log. There is no
@@ -298,6 +318,19 @@ type Defaults struct {
 	// smallest budget that fits, then the id; the split by exact budget).
 	// Default 128.
 	PlacementToleranceMiB int
+
+	// The host process's own memory (the model server's prompt cache and
+	// context checkpoints), passed explicitly on both launch paths
+	// (internal/instance command.go). CacheRAMMiB above is --cache-ram for a
+	// host on the scheduler's machine (default 2048); NodeHostCacheRAMMiB is
+	// --cache-ram for a host on a node (default 0: no prompt cache there).
+	// CtxCheckpoints is --ctx-checkpoints, per slot, on both (default 32, the
+	// server's own). CountHostMemory: the host-side need (checkpoints x the
+	// family's cell, on a host on a node) enters that node's reservation;
+	// off (the default) it is computed and shown only.
+	NodeHostCacheRAMMiB int
+	CtxCheckpoints      int
+	CountHostMemory     bool
 }
 
 // Values of defaults.membership. MembershipFleet is the legacy mode, kept
@@ -364,6 +397,34 @@ type Options struct {
 	// points one at a new file is (a load of the profile is refused at plan
 	// time instead).
 	KeepModels map[string]string
+	// KeepPaths maps a profile to the model path it had as stored somewhere
+	// other than the configuration being changed (a trash record, a revision
+	// rolled back to): a profile that keeps it is not refused by the path
+	// rule (internal/modelpath), as a stored profile is not, but its file
+	// must exist (unlike KeepModels).
+	KeepPaths map[string]string
+	// ModelNote, when set, adds a sentence to the refusal of a model file
+	// that is not there (models slice 3: "it is in the trash since ...").
+	ModelNote func(model string) string
+	// KeepArgs maps a profile to the extra_args it had before the write being
+	// checked (or as stored, for a load). A profile whose extra_args are
+	// unchanged is not refused for a flag the scheduler began to manage
+	// later (lateManaged): an older configuration stays loadable.
+	KeepArgs map[string][]string
+	// TrainedCtx reads the trained context of a model file (its GGUF
+	// <arch>.context_length); false when unknown. Nil: not checked. A llama
+	// profile whose ctx is above it is refused unless it says
+	// ctx_above_trained, or it keeps its stored model and ctx (KeepCtx).
+	TrainedCtx func(path string) (int, bool)
+	// KeepCtx maps a profile to its model and ctx before the write being
+	// checked: a stored profile that keeps both still loads.
+	KeepCtx map[string]KeptCtx
+}
+
+// KeptCtx is a stored profile's model and ctx (Options.KeepCtx).
+type KeptCtx struct {
+	Model string
+	Ctx   int
 }
 
 // Bench is the benchmark feature's settings (design 9.3).
@@ -376,7 +437,7 @@ type Bench struct {
 	RegressLoadPct float64
 	// RegressDecodePct: decode tokens per second this much lower is a regression (default 7).
 	RegressDecodePct float64
-	// MaxRunMinutes stops a run that takes longer (default 240).
+	// MaxRunMinutes stops a run that takes longer (default 720: a Full pass takes 6 to 7 hours).
 	MaxRunMinutes int
 	// RetentionDays: a finished, unpinned run older than this many days is
 	// trimmed (its requests and transcripts removed; the run, its steps and its
@@ -393,7 +454,7 @@ const (
 	MaxWSMaxClients         = 1000
 	DefaultRegressLoadPct   = 15
 	DefaultRegressDecodePct = 7
-	DefaultMaxRunMinutes    = 240
+	DefaultMaxRunMinutes    = 720
 	// DefaultBenchRetentionDays and MaxBenchRetentionDays bound bench_retention_days.
 	DefaultBenchRetentionDays = 0 // off: nothing is trimmed until the owner sets it
 	MaxBenchRetentionDays     = 36500

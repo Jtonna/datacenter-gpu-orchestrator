@@ -4,8 +4,8 @@ import "testing"
 
 // The Profiles page (phase 5, no mockup): one row per profile (name and
 // description, the model's short name, context, zones, the plan's pill),
-// no placement lists in the table; the generated benchmark profiles hidden
-// until "Show generated (N)"; a pager; the search, filter, page and open
+// no placement lists in the table; the test profiles (profiles plan,
+// section 9) hidden until "Show test profiles too (N)"; a pager; the search, filter, page and open
 // profile in the address; the placements in the side panel with Edit,
 // Duplicate and Delete; the editor and its save through the review dialog
 // (dry run, a comment, then the write).
@@ -13,19 +13,19 @@ func TestUINextProfiles(t *testing.T) {
 	fetch := fixtureAnswers(t, []string{"--catalog"}, "/api/profiles", "/api/models", "/api/config", "/api/config/schema", "/api/status")
 	st := fetch["/api/status"]
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
-		map[string]any{"name": "profiles: the list, generated hidden", "route": "#/profiles", "status": st,
-			"expect": []string{"Profiles", "made by hand", "generated", "gemma-4-27b-long", "qwen3-32b-split", "Show generated", "300", "12 profiles",
-				"Would make room", "Cannot be placed", "Would wait", "Held back", "Forced on 3", "Automatic", "128k", "gemma-4-12b"},
+		map[string]any{"name": "profiles: the list, test profiles hidden", "route": "#/profiles", "status": st,
+			"expect": []string{"Profiles", "production", "test", "gemma-4-27b-long", "qwen3-32b-split", "Show test profiles too", "302", "10 profiles",
+				"Would make room", "Cannot be placed", "Would wait", "Forced on 3", "Automatic", "128k", "gemma-4-12b"},
 			"has":    []string{"tr[data-profile=gemma-4-27b-long]", "button[data-gen][aria-pressed=false]"},
 			"absent": []string{"bench-gemma-4-12b-c16k-n1", "1–16 of"}},
 		// no placement lists in the table: the zones of a forced profile are only counted
 		map[string]any{"name": "profiles: no placements in the table", "route": "#/profiles?q=qwen3-32b-split", "status": st,
 			"expect": []string{"qwen3-32b-split", "Forced on 3"}, "absent": []string{"ps5-01", "ps5-02", "Tensor split"}},
-		map[string]any{"name": "profiles: generated shown, with a pager", "route": "#/profiles?show=all", "status": st,
-			"expect": []string{"bench-gemma-4-12b-c16k-n1", "Hide generated", "312 profiles", "1–16 of 312"}, "has": []string{"button[data-gen][aria-pressed=true]"}},
+		map[string]any{"name": "profiles: test profiles shown, with a pager", "route": "#/profiles?show=all", "status": st,
+			"expect": []string{"bench-gemma-4-12b-c16k-n1", "Hide test profiles", "312 profiles", "1–16 of 312"}, "has": []string{"button[data-gen][aria-pressed=true]"}},
 		map[string]any{"name": "profiles: page 2 from the address", "route": "#/profiles?show=all&page=2", "status": st, "expect": []string{"17–32 of 312"}},
 		map[string]any{"name": "profiles: search counts the hidden ones", "route": "#/profiles?q=glm", "status": st,
-			"expect": []string{"glm-4.5-air", "generated match too"}, "absent": []string{"gemma-4-27b-long"}},
+			"expect": []string{"glm-4.5-air", "test profiles match too"}, "absent": []string{"gemma-4-27b-long"}},
 		map[string]any{"name": "profiles: nothing matches", "route": "#/profiles?q=zzzz", "status": st, "expect": []string{"No profile matches"}},
 		map[string]any{"name": "profiles: a row opens the panel", "route": "#/profiles", "status": st, "click": []string{"tr[data-profile=qwen3-32b-split]"},
 			"hash": "#/profiles?profile=qwen3-32b-split"},

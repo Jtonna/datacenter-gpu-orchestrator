@@ -18,7 +18,7 @@ Available devices:
 ```
 
 Otherwise it serves `/health`, `/v1/chat/completions` (JSON or SSE),
-`/v1/completions`, `/v1/embeddings`, `/props`, `/slots`, `/v1/models`. Until
+`/v1/completions`, `/v1/embeddings`, `/props`, `/slots`, `/v1/models`, `/tokenize` (a token per four characters). Until
 loaded, every endpoint answers 503 `{"error":{"message":"Loading model",...}}`.
 `n_ctx` per slot is `--ctx-size / --parallel`.
 
@@ -37,6 +37,8 @@ loaded, every endpoint answers 503 `{"error":{"message":"Loading model",...}}`.
 | `FAKELLAMA_STREAM_CHUNKS` | Content chunks per reply. Default 5. |
 | `FAKELLAMA_STREAM_DELAY` | Pause between streamed chunks. Default 0. |
 | `FAKELLAMA_STALL_AFTER` | Streaming: after N content chunks send nothing more and hold the connection until the client leaves. Default off. |
+| `FAKELLAMA_COUNT_PROMPT` | Non-empty: a chat's prompt is a quarter of its messages' characters (at least 10), and when it grows the previous prompt is reported as cached (`cache_n`), as `/tokenize` counts; a context fill then reaches its marks. Default: every prompt is 10 tokens. |
+| `FAKELLAMA_TRAINED_CTX` | N: the model's trained context. `/props` reports the slot context capped at N, as llama-server caps it; an `--override-kv <arch>.context_length=int:M` on the command line lifts it to M. Default: no cap. |
 | `FAKELLAMA_LOAD_LOG` | On start (before listening), and only when the command line has `-lv N` with N >= 4 (`--verbosity`, `--log-verbosity`; llama.cpp hides these INFO lines at its default 3), print llama.cpp style `model` / `KV` / `compute buffer size` lines on stderr: `auto` (one set per `--device` name, 1000/200/100 MiB) or `NAME:modelMiB:kvMiB:computeMiB,...`. RPC devices are named `RPC0[<endpoint>]` as in llama.cpp. A `CPU_Mapped` model line and unrelated lines are interleaved. Default: nothing. |
 | `FAKELLAMA_IGNORE_SIGTERM` | Non-empty: log "ignoring" on stderr and keep running on SIGTERM/interrupt. |
 

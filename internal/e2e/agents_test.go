@@ -11,6 +11,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakeagent"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
 
@@ -123,13 +124,14 @@ func TestAgentMembershipSplitLoad(t *testing.T) {
 
 // freeLoopbackPort is a port free on 127.0.0.2 (the agents listen on
 // 127.0.0.2 and 127.0.0.3 with the same ports).
+// freeLoopbackPort is a port on the second loopback address that a fake
+// agent binds later: outside the ephemeral range (testutil/ports).
 func freeLoopbackPort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.2:0")
+	p, err := ports.FreeOn("127.0.0.2")
 	if err != nil {
 		t.Skipf("no second loopback address on this machine: %v", err)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return p
 }
 
 // TestAgentNodeWithoutATierIsListed: an agent node that matches no tier is

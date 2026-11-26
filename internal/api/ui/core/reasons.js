@@ -74,6 +74,11 @@ function clause(s) {
     return { short: l.length === 1 ? `${l[0]} is offline` : 'Its nodes are offline', text: `It is tied to ${names(l)}, which ${isAre(l)} offline or cannot be used right now.` };
   }
   if ((m = s.match(/^forced node (\S+) is not in the (fleet view|pool)$/i))) return { short: `${m[1]} is not known`, text: poolText(m[2].toLowerCase() === 'pool', `It is tied to ${m[1]}, which the fleet does not report.`) };
+  // a program on this machine (kind command) while the machine is excluded (scheduler request.go forcedExclusion)
+  if ((m = s.match(/^profile (\S+) is a command profile and runs only on the local node (\S+), which is excluded by config/i))) {
+    return { short: `Runs only on ${m[2]}, which is excluded`, text: `It is a program on this machine and runs only on ${m[2]}, which is excluded from use (Settings, excluded zones).`, excluded: m[2] };
+  }
+  if ((m = s.match(/^profile (\S+) forces node (\S+), but node (\S+) is excluded by config/i))) return { short: `${m[3]} is excluded`, text: `It is tied to ${m[3]}, which is excluded from use.`, excluded: m[3] };
   if ((m = s.match(/^forced node (\S+): node (\S+) is excluded by config$/i))) return { short: `${m[2]} is excluded`, text: `It is tied to ${m[2]}, which is excluded from use.` };
   if ((m = s.match(/^forced node (\S+) is quarantined until (\S+)$/i))) return { short: `${m[1]} is set aside`, text: `It is tied to ${m[1]}, which is set aside until ${m[2]} after a failure.` };
   if ((m = s.match(/^nodes that would fit are quarantined until (\S+)$/i))) return { short: 'Nodes are set aside', text: `The nodes that could take it are set aside until ${m[1]} after a failure.` };

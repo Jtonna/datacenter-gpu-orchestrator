@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 )
 
 func TestMain(m *testing.M) {
@@ -43,11 +43,9 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func freePort(t *testing.T) int {
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
+// freePort is a port the exporter under test binds later: outside the
+// ephemeral range (testutil/ports).
+func freePort(t *testing.T) int { return ports.Free(t, "127.0.0.1") }
 
 func TestSupervisorRunsAndRestarts(t *testing.T) {
 	dir := t.TempDir()

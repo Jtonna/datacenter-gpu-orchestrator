@@ -20,7 +20,7 @@ import (
 // proxy with the key; no host child runs on the scheduler's machine; the
 // unload stops both launches and closes the host port.
 func TestAgentHostOnNode(t *testing.T) {
-	agentPort, workerPort, hostPort := freeLoopbackPort(t), freeLoopbackPort(t), freeLoopbackPort(t)
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
 	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: agentproto.Release,
 		Llama: "a01665d30de2885879a64eae999067ef3ef5fd4b",
 		Folders: map[string]map[string][]byte{
@@ -49,7 +49,7 @@ func TestAgentHostOnNode(t *testing.T) {
 			GPUs:    []agentproto.GPU{{Vendor: "amd", Integrated: true}},
 			Devices: []agentproto.Device{{Name: "Vulkan0", Backend: "vulkan", TotalMiB: 14336, FreeMiB: 14000, SharesSystemMemory: true}}}
 		if i == 0 {
-			a.Capabilities, a.HostPort = []string{agentproto.CapHostLaunch}, hostPort
+			a.Capabilities, a.HostPort = []string{agentproto.CapHostLaunch}, fakeagent.AutoPort // binds port 0 at the launch
 		}
 		if err := a.Start(); err != nil {
 			t.Fatal(err)
@@ -110,7 +110,7 @@ func TestAgentHostOnNode(t *testing.T) {
 		}
 		return true
 	})
-	if conn, err := net.DialTimeout("tcp", net.JoinHostPort(host.Addr, strconv.Itoa(hostPort)), 500*time.Millisecond); err == nil {
+	if conn, err := net.DialTimeout("tcp", net.JoinHostPort(host.Addr, strconv.Itoa(host.HostPortNow())), 500*time.Millisecond); err == nil {
 		conn.Close()
 		t.Fatal("the host port is still open after the unload")
 	}

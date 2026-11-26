@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -50,6 +52,10 @@ type Options struct {
 	// overheads copied from the release before device counts read their
 	// readings from it once (hostoverhead.go). nil: none.
 	HostReadings HostReadingEvents
+	// DeviceHistory answers event-history queries: the stored per-device
+	// rows whose load was a cached reload are found with it and dropped
+	// once at start (deviceoverhead.go). nil: none.
+	DeviceHistory DeviceHistory
 	// LlamaBuild is the llama.cpp commit the loads run on (the host
 	// program's); stored with each measurement, and a restored measurement
 	// of another build is not trusted (needcount.go). "" when not known.
@@ -65,6 +71,9 @@ type Options struct {
 	// are, then decides trust (builds.go; fourth review, FS2). nil: the host
 	// build is only LlamaBuild.
 	HostBuild func(ctx context.Context) (string, error)
+	// ReadSlotCtx reads a ready llama server's context per slot (/props)
+	// after every load (realctx.go); default instance.ReadSlotCtx.
+	ReadSlotCtx func(ctx context.Context, addr, key string) (int, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -76,6 +85,10 @@ type Scheduler struct {
 	cfg  atomic.Pointer[config.Config]
 	opts Options
 	core *schedCore
+
+	// dryPlans counts the dry-run plans asked of the loop (Plan), from any
+	// caller: one step of the loop each
+	dryPlans atomic.Int64
 
 	events   chan event
 	tick     chan struct{}
@@ -114,6 +127,7 @@ type snapshot struct {
 	upstream map[string]string
 	upKeys   map[string]string // the key of an upstream that wants one (a host on a node)
 	upPlace  map[string]UpstreamPlacement
+	scoped   map[string]*core.Profile // scoped.go: the run-scoped profiles held now (never modified)
 }
 
 // UpstreamPlacement is where a ready instance runs, for a passthrough
@@ -128,6 +142,9 @@ type UpstreamPlacement struct {
 func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	if cfg == nil || o.View == nil || o.Prober == nil || o.Launcher == nil {
 		return nil, errors.New("scheduler: config, View, Prober and Launcher are required")
+	}
+	if o.ReadSlotCtx == nil {
+		o.ReadSlotCtx = instance.ReadSlotCtx
 	}
 	if o.Clock == nil {
 		o.Clock = RealClock{}
@@ -163,6 +180,7 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	s.core.buildRelease = o.Release
 	s.core.llamaBuild, s.core.releaseBuild = o.LlamaBuild, o.ReleaseBuild
 	s.core.hostEventsFn = o.HostReadings
+	s.core.devEventsFn = o.DeviceHistory
 	if o.NeedStore != nil {
 		// Read before Run, so the first request is planned with them.
 		s.core.restoreNeeds(o.NeedStore)
@@ -266,7 +284,7 @@ func (s *Scheduler) step(ev event) {
 			place[name] = UpstreamPlacement{Instance: in.iid, Session: in.sessionID, Nodes: s.core.leaseNodesOf(in)} // built once per instance
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place})
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place, scoped: maps.Clone(s.core.scoped)})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
@@ -451,6 +469,13 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState)
 		}()
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: err})
+		if err == nil && ef.spec.HealthPath != "" && ef.spec.HealthPath != "/health" {
+			return // a command profile: no model server context
+		}
+		if err == nil {
+			n, perr := s.opts.ReadSlotCtx(ctx, instance.AddrOf(ch), instance.APIKeyOf(ch))
+			s.post(context.Background(), evServedCtx{iid: ef.iid, ctx: n, err: perr})
+		}
 	}, func(p any) {
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: internalErr(p)})
@@ -470,7 +495,12 @@ type Lease struct {
 	// Gone is closed when the instance is removed (it exited, was stopped
 	// or its node was lost): a request still forwarded then is ended. Nil
 	// never closes.
-	Gone    <-chan struct{}
+	Gone <-chan struct{}
+	// CutBy, when the instance was stopped on purpose while the request
+	// ran (a forced unload), is the answer the caller gets instead of the
+	// broken connection: 503 unloaded, saying why. It returns nil when the
+	// instance was not stopped on purpose; read it once the upstream failed.
+	CutBy   func() *Error
 	Profile string // profile name, never an alias
 	Alias   bool   // the request named an alias (log it with the caller's address)
 	// StallTimeout is the profile's stall_timeout for the proxy (8.4): the
@@ -483,6 +513,9 @@ type Lease struct {
 	Instance uint64
 	Session  string
 	Nodes    []LeaseNode
+	// Ctx is the context per slot the instance runs with (the server's own
+	// figure once read, else the planned one): the request log's ctx.
+	Ctx int
 
 	once sync.Once
 	s    *Scheduler
@@ -515,7 +548,7 @@ func (s *Scheduler) Acquire(ctx context.Context, model string) (*Lease, error) {
 // X-Bench-Run header). The id only tags the history records of the load the
 // request causes (data.bench_run); scheduling is unchanged.
 func (s *Scheduler) AcquireFor(ctx context.Context, model, benchRun string) (*Lease, error) {
-	p, alias, ok := s.Config().Resolve(model)
+	p, alias, ok := s.resolve(model)
 	if !ok {
 		return nil, errUnknown(model)
 	}
@@ -558,11 +591,11 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 	g := a.grant
 	cfg := s.Config()
 	stall := cfg.Defaults.StallTimeout // the profile was deleted since the grant
-	if p := cfg.Profiles[g.Profile]; p != nil {
+	if p, _, ok := s.resolve(g.Profile); ok {
 		stall = cfg.EffectiveStallTimeout(p)
 	}
-	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
-		Instance: g.Instance, Session: g.Session, Nodes: g.Nodes, s: s}, nil
+	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, CutBy: g.CutBy, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
+		Instance: g.Instance, Session: g.Session, Nodes: g.Nodes, Ctx: g.Ctx, s: s}, nil
 }
 
 // Load is POST /api/load: a waiter that never disconnects (8.2 step 6).
@@ -576,7 +609,7 @@ func (s *Scheduler) Load(ctx context.Context, model string) error {
 // LoadFor is Load for a request that carries a bench run id (the X-Bench-Run
 // header): the id only tags the history records of the load (data.bench_run).
 func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
@@ -732,22 +765,36 @@ func (s *Scheduler) query(ctx context.Context, fn func(c *schedCore)) error {
 // instance if idle; force stops it even if busy or loading. ErrNotLoaded
 // and ErrBusy report why nothing was done.
 func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error {
-	p, _, ok := s.Config().Resolve(model)
+	return s.UnloadFor(ctx, model, force, "")
+}
+
+// UnloadFor is Unload with why: a forced unload's requests in flight are
+// answered 503 unloaded, "<profile> was unloaded: <why>" (without why,
+// "<profile> was unloaded").
+func (s *Scheduler) UnloadFor(ctx context.Context, model string, force bool, why string) error {
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
-	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.unload(p.Name, force) })
+	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.unloadFor(p.Name, force, why) })
 	if qerr != nil {
 		return qerr
 	}
 	return err
 }
 
+// CancelQueued answers the queued requests of the named profiles 503
+// unloaded and drops their queue entries (cancelQueued); the number of
+// requests answered.
+func (s *Scheduler) CancelQueued(ctx context.Context, profiles []string) (int, error) {
+	return ask(s, ctx, func(c *schedCore) int { return c.cancelQueued(profiles) })
+}
+
 // Drain is POST /api/models/drain/{model}: the instance admits nothing
 // new and stops once its runs finish (drain.go); the answer is the ETA in
 // seconds (nil: idle and stopped now, or no run length known yet).
 func (s *Scheduler) Drain(ctx context.Context, model string) (*float64, error) {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return nil, errUnknown(model)
 	}
@@ -764,7 +811,7 @@ func (s *Scheduler) Drain(ctx context.Context, model string) (*float64, error) {
 
 // Undrain takes a drain back: the instance admits again.
 func (s *Scheduler) Undrain(ctx context.Context, model string) error {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
@@ -788,11 +835,15 @@ func (s *Scheduler) Status(ctx context.Context) (Status, error) {
 
 // Plan is POST /api/plan: what a request for model would meet now. It
 // changes nothing.
+// DryPlans is how many dry-run plans were asked of the loop so far.
+func (s *Scheduler) DryPlans() int64 { return s.dryPlans.Load() }
+
 func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) {
-	p, alias, ok := s.Config().Resolve(model)
+	p, alias, ok := s.resolve(model)
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
+	s.dryPlans.Add(1)
 	r, err := askRead(s, ctx, "plan of "+p.Name, func(c *schedCore) PlanReport { return c.dryPlan(p.Name) })
 	if err != nil {
 		return PlanReport{}, err
@@ -853,7 +904,7 @@ func (s *Scheduler) ForgetShape(ctx context.Context, shape string) (bool, error)
 // Upstream is the address for /upstream/{model}: set only while the
 // profile's instance is ready or draining. It never waits.
 func (s *Scheduler) Upstream(model string) (string, bool) {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return "", false
 	}
@@ -864,7 +915,7 @@ func (s *Scheduler) Upstream(model string) (string, bool) {
 // UpstreamPlacement is where Upstream(model)'s instance runs; false when
 // it is not ready. It never waits and takes no lease.
 func (s *Scheduler) UpstreamPlacement(model string) (UpstreamPlacement, bool) {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return UpstreamPlacement{}, false
 	}
@@ -875,7 +926,7 @@ func (s *Scheduler) UpstreamPlacement(model string) (UpstreamPlacement, bool) {
 // UpstreamKey is the key requests to Upstream(model) must carry as
 // "Authorization: Bearer <key>"; "" when none (phase 6: a host on a node).
 func (s *Scheduler) UpstreamKey(model string) string {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return ""
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -20,6 +22,10 @@ func (s *Server) statusView(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// health judges this one when it evaluates within healthReuse
+	cp := st
+	s.health.last.Store(&cp)
+	s.health.lastAt.Store(s.opts.Now().UnixMilli())
 	v := jsonView(st).(map[string]any)
 	last := s.activity.lastByModel()
 	if insts, ok := v["instances"].([]any); ok {
@@ -74,13 +80,15 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 	for _, n := range names {
 		p := cfg.Profiles[n]
 		rep, err := s.sched.Plan(ctx, n)
+		s.catalog.planReads.Add(1)
 		var se *scheduler.Error
 		if errors.As(err, &se) && se.Reason == scheduler.ReasonUnknownModel {
 			continue // deleted since the snapshot
 		}
 		e := map[string]any{"id": n, "kind": string(p.Kind), "model": p.Model, "ctx": p.Ctx, "parallel": p.Parallel,
 			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit,
-			"generated": IsGeneratedProfile(n, p.Generated)}
+			"generated": IsGeneratedProfile(n, p.Generated),
+			"ttl_s":     int64(cfg.EffectiveTTL(p) / time.Second)} // unload when idle; 0: never
 		if p.TensorSplit == nil {
 			e["tensor_split"] = []int{}
 		}
@@ -89,6 +97,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		}
 		if p.Description != "" {
 			e["description"] = p.Description
+		}
+		// The TEST / PRODUCTION marking, read only (config.EffectiveStage).
+		e["stage"], e["stage_set"] = config.EffectiveStage(p)
+		e["shown_name"] = config.ShownName(p)
+		if p.DisplayName != "" {
+			e["display_name"] = p.DisplayName
 		}
 		// It forces a node exclude_nodes names: kept, refused until lifted.
 		if b, ok := cfg.BlockedByExclusion(n); ok {
@@ -103,6 +117,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				e["needs_mib"] = rep.NeedMiB
 				e["needs_basis"] = rep.NeedBasis
 				e["needs_measured"] = rep.Measured
+				// written by hand (needs_mib in the profile): shown as such, also
+				// when the plan rejects (the reviewer, 26 Nov)
+				e["needs_written"] = strings.HasPrefix(rep.NeedBasis, string(scheduler.NeedConfigured))
 				if rep.DerivedFromCtx > 0 {
 					e["derived_from_ctx"] = rep.DerivedFromCtx // the basis says "derived from the measurement at ctx N"
 				}
@@ -126,6 +143,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				"nodes": nonNil(nodes), "reason": rep.Reason, "instance": rep.Instance}
 			if rep.Warning != "" {
 				plan["warning"] = rep.Warning
+			}
+			if rep.Ctx > 0 {
+				plan["ctx"] = rep.Ctx // the context the plan is for (the trained context when ctx is above it)
+			}
+			if rep.CtxNote != "" {
+				plan["ctx_note"] = rep.CtxNote
 			}
 			if rep.TightFit {
 				plan["tight_fit"] = true // the reason says where and by how much
@@ -155,6 +178,11 @@ func hostEntry(e map[string]any, rep scheduler.PlanReport, names map[string]stri
 		return
 	}
 	e["host"] = rep.Host
+	if rep.HostMemory != nil {
+		// the host process's own memory where it is hosted (scheduler
+		// hostmem.go): checkpoints and prompt cache, counted or only shown
+		e["host_memory"] = jsonView(*rep.HostMemory)
+	}
 	if rep.Host != core.HostNode {
 		return
 	}

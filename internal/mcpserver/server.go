@@ -497,7 +497,7 @@ func (s *Server) ToolInfo() any {
 			{"id": GroupRead, "title": "Read", "note": "Look at the cluster, the configuration, the history and benchmark results. Nothing changes."},
 			{"id": GroupConfig, "title": "Configuration", "note": "Change settings, profiles, tiers and nodes. Every change is a revision that can be rolled back."},
 			{"id": GroupBench, "title": "Benchmarks", "note": "Define benchmarks and suites, start and cancel runs. A run loads and unloads real models."},
-			{"id": GroupRuntime, "title": "Load and unload", "note": "Load a model ahead of time or stop a loaded one. Only agents and the API can do this; the web UI has no such control."},
+			{"id": GroupRuntime, "title": "Load and unload", "note": "Load a model ahead of time or stop a loaded one. The web UI does this too (load, unload and force-unload, from Zones and Machine details)."},
 		}}
 }
 

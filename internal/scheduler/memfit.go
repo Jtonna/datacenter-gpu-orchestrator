@@ -315,7 +315,7 @@ func (c *schedCore) learnNeed(in *inst) {
 			"profile", in.prof.Name, "configured_mib", base.Need.MiB, "measured_mib", total)
 		c.recordInst(in, history.TNeedsMiBTooLow, history.Warn,
 			fmt.Sprintf("The configured needs_mib of %s (%d MiB) is too low: the load measured %d MiB, which is used from now on.",
-				in.prof.Name, base.Need.MiB, total),
+				c.shownName(in.prof.Name), base.Need.MiB, total),
 			map[string]any{"configured_mib": base.Need.MiB, "measured_mib": total})
 	}
 	c.log.Info("learned memory need", "profile", in.prof.Name, "measured_mib", total, "per_node", len(l.Nodes) > 0)
@@ -324,7 +324,7 @@ func (c *schedCore) learnNeed(in *inst) {
 		perNode = append(perNode, map[string]any{"node": c.nodeName(n.ID), "fraction": n.Fraction, "mib": n.MiB})
 	}
 	c.recordInst(in, history.TLearnedNeed, history.Info,
-		fmt.Sprintf("Measured the memory need of %s at %d MiB; fit decisions use it for the rest of this run.", in.prof.Name, total),
+		fmt.Sprintf("Measured the memory need of %s at %d MiB; fit decisions use it for the rest of this run.", c.shownName(in.prof.Name), total),
 		map[string]any{"measured_mib": total, "highest_mib": l.TotalMiB, "per_node": perNode})
 	c.storeLearned(l)
 	c.changed = true

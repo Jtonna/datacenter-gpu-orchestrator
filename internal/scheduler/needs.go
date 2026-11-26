@@ -82,6 +82,10 @@ func (k needKey) shape() string {
 // shapeOf is the key of p's learned need in c.learned and the store.
 func shapeOf(p *core.Profile) string { return needKeyOf(p).shape() }
 
+// ShapeOf is the shape key of p, as GET /api/needs and the stored peaks
+// name it.
+func ShapeOf(p *core.Profile) string { return shapeOf(p) }
+
 // ProfilesOfShape lists, sorted, the profiles of cfg whose load has the
 // shape of profile name's (they share one learned need); nil when there is
 // no such profile.
@@ -117,6 +121,7 @@ type needOp struct {
 	rec   *needstore.Record
 	host  *needstore.HostOverhead
 	dev   *needstore.DeviceOverhead // one node's measured per-device overhead (deviceoverhead.go)
+	drop  bool                      // with dev: delete that row instead
 }
 
 // key is what the writer merges ops by: the shape, and the device count of
@@ -310,6 +315,10 @@ func applyNeedOps(st NeedStore, ops []needOp, log *slog.Logger) {
 		case op.host != nil:
 			if hs, ok := st.(HostOverheadStore); ok {
 				err = hs.PutHost(*op.host)
+			}
+		case op.dev != nil && op.drop:
+			if ds, ok := st.(DeviceOverheadStore); ok {
+				err = ds.DeleteDeviceRow(op.dev.Shape, op.dev.Node, op.dev.Devices)
 			}
 		case op.dev != nil:
 			if ds, ok := st.(DeviceOverheadStore); ok {

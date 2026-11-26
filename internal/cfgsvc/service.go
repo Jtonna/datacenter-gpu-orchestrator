@@ -176,11 +176,19 @@ func New(ctx context.Context, o Options) *Service {
 				"revision", r.Revision, "field", f)
 		}
 	}
-	cfg, err := config.Build(r.Doc, o.Boot, o.Parse)
+	boot := o.Parse
+	boot.KeepCtx = keptCtx(r.Doc)   // stored profiles load whatever their ctx
+	boot.KeepArgs = keptArgs(r.Doc) // a load is never a new write: a flag managed later stays loadable
+	cfg, err := config.Build(r.Doc, o.Boot, boot)
 	if err != nil {
 		// A model file that went missing must not stop the scheduler: build without the file check.
+		// A stored profile whose model path the path rule refuses (internal/modelpath) is kept the
+		// same way: its load is refused at plan time, and only writes that point a profile at such a
+		// path are refused.
 		loose := o.Parse
 		loose.FileExists = func(string) bool { return true }
+		loose.KeepModels, loose.KeepArgs = keptModels(r.Doc), keptArgs(r.Doc)
+		loose.TrainedCtx = nil
 		var err2 error
 		if cfg, err2 = config.Build(r.Doc, o.Boot, loose); err2 != nil {
 			s.loadErr = "the stored configuration (revision " + fmt.Sprint(r.Revision) + ") is invalid: " + err2.Error()
@@ -189,6 +197,9 @@ func New(ctx context.Context, o Options) *Service {
 			return s
 		}
 		s.log.Warn("stored configuration has problems that only the file check finds", "err", err)
+	}
+	for _, w := range cfg.LateManagedArgs() {
+		s.log.Warn("stored profile sets a flag the scheduler now manages; the launch drops it", "revision", r.Revision, "detail", w)
 	}
 	cfg.Revision = r.Revision
 	s.setConfig(cfg)
@@ -305,6 +316,9 @@ func (s *Service) RevisionView(ctx context.Context, n int64) (*View, *cfgstore.R
 	}
 	loose := s.o.Parse
 	loose.FileExists = func(string) bool { return true }
+	loose.KeepModels = keptModels(r.Doc) // an older revision may name a path the path rule now refuses
+	loose.KeepArgs = keptArgs(r.Doc)
+	loose.TrainedCtx = nil
 	cfg, err := config.Build(r.Doc, s.o.Boot, loose)
 	if err != nil {
 		return nil, nil, err
@@ -325,6 +339,13 @@ type mutation struct {
 	requireEmpty bool
 	fn           func(d *config.Document) error
 	refuse       func(before, after *config.Document, force bool) ([]string, error)
+	// stored are profiles put back exactly as they were stored (keyed by
+	// their id in the new document): a trash record's, a revision's. Each is
+	// checked as a stored profile is (storedKeep), never as a new write; what
+	// a new write would refuse comes back as warnings (storedWarnings).
+	stored map[string]*config.ProfileSpec
+	// storedWhat names them in those warnings ("restored profiles").
+	storedWhat string
 }
 
 func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result, error) {
@@ -372,11 +393,15 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 		warnings = w
 	}
 	parse := s.o.Parse
-	parse.KeepModels = keptModels(before)
+	parse.KeepModels, parse.KeepArgs = keptModels(before), keptArgs(before)
+	parse.KeepCtx = keptCtx(before)    // a stored ctx above the trained context still loads; a new one is refused
+	parse.ModelNote = s.trashNote(ctx) // a file in the trash is named as such (models slice 3)
+	storedKeep(&parse, m.stored)
 	cfg, err := config.Build(after, s.o.Boot, parse)
 	if err != nil {
 		return nil, nil, validationFrom(err)
 	}
+	warnings = append(warnings, s.storedWarnings(before, after, m, cfg)...)
 	chs := sectionChanges(before, after)
 	// A forced write while the stored configuration has fields this
 	// version does not know writes a new revision even when nothing else
@@ -523,11 +548,35 @@ func unknownDropEntry(fields []string) audit.Entry {
 // keptModels is the model file each profile of before points at: a write that
 // leaves a profile on its file is not refused when that file is missing; one
 // that adds a profile or points one at another file is (B4).
+// keptArgs maps each profile of before to its extra_args (config
+// Options.KeepArgs).
+func keptArgs(before *config.Document) map[string][]string {
+	m := make(map[string][]string, len(before.Profiles))
+	for id, p := range before.Profiles {
+		if p != nil && len(p.ExtraArgs) > 0 {
+			m[id] = p.ExtraArgs
+		}
+	}
+	return m
+}
+
 func keptModels(before *config.Document) map[string]string {
 	m := make(map[string]string, len(before.Profiles))
 	for id, p := range before.Profiles {
 		if p != nil && p.Model != "" {
 			m[id] = p.Model
+		}
+	}
+	return m
+}
+
+// keptCtx is every stored profile's model and ctx: a write that keeps them
+// is not refused for a ctx above the model's trained context.
+func keptCtx(before *config.Document) map[string]config.KeptCtx {
+	m := make(map[string]config.KeptCtx, len(before.Profiles))
+	for id, p := range before.Profiles {
+		if p != nil && p.Ctx != nil {
+			m[id] = config.KeptCtx{Model: p.Model, Ctx: *p.Ctx}
 		}
 	}
 	return m

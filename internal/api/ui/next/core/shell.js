@@ -69,12 +69,16 @@ export const NAV = [
     { id: 'nodes', label: 'Machine details', desc: 'One card per machine, with its memory and checks' },
   ] },
   { id: 'models', label: 'Models', icon: I.models, pages: [
-    { id: 'models', label: 'Models', desc: 'Model files, what is loaded, and their profiles' },
+    { id: 'models', label: 'Models', desc: 'The models available to you' },
   ] },
   { id: 'benchmarks', label: 'Benchmarks', icon: I.benchmarks, pages: [
-    { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'trends'].includes(r.rest[0]) },
-    { id: 'benchmarks', rest: ['runs'], label: 'Runs', match: r => r.rest[0] === 'runs' },
-    { id: 'benchmarks', rest: ['trends'], label: 'Aggregates', match: r => r.rest[0] === 'trends' },
+    // the boards' menu (Bench-Overview): Overview, Benchmarks N, Runs N,
+    // Settings (the Settings page's Benchmarks group). The counts are the
+    // benchmark pages' own copy (state.benchCounts), shown once read.
+    { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'all'].includes(r.rest[0]) },
+    { id: 'benchmarks', rest: ['all'], label: 'Benchmarks', match: r => r.rest[0] === 'all', count: () => state.benchCounts && state.benchCounts.benchmarks, countWord: 'group or benchmark', countWords: 'groups and benchmarks' },
+    { id: 'benchmarks', rest: ['runs'], label: 'Runs', match: r => r.rest[0] === 'runs', count: () => state.benchCounts && state.benchCounts.runs, countWord: 'run' },
+    { id: 'settings', rest: ['bench'], label: 'Settings', link: true },
   ] },
   { id: 'mcp', label: 'MCP', icon: I.mcp, foot: true, pages: [
     { id: 'mcp', label: 'MCP', desc: 'The MCP server and the keys of AI agents' },
@@ -82,6 +86,8 @@ export const NAV = [
   // the gear (Q69): everything that configures Potluck or describes it
   { id: 'settings', label: 'Settings', icon: I.gear, foot: true, gear: true, pages: [
     { id: 'profiles', label: 'Profiles', desc: 'Models, context size and memory need' },
+    // under Profiles and out of the way (profiles plan, section 9)
+    { id: 'test-profiles', label: 'Test profiles', desc: 'Profiles for trials and benchmarks, kept apart' },
     { id: 'tiers', label: 'Tiers and zones', desc: 'Priority, link speed, switch zones off' },
     { id: 'settings', label: 'Settings', desc: 'Holds, timeouts, settle time and the other defaults' },
     { id: 'audit', label: 'Audit', desc: 'Every change, who made it and why' },
@@ -153,8 +159,8 @@ export function connection() {
   if (st && st.shutting_down) return { title: 'The scheduler is shutting down.', note: 'It finishes the requests in flight and takes no new ones.' };
   if (!view) return null;
   const age = view.age >= 0 ? view.age + (Date.now() - state.statusAt) / 1000 : null;
-  if (view.stale) return { title: 'The fleet feed is stale' + (age != null ? ` (${dur(Math.round(age))} old).` : '.'), note: 'Remote nodes are not used for new loads until it recovers; models that are already loaded keep serving.' };
-  if (!view.connected) return { title: 'The fleet feed is disconnected.', note: 'The node figures may be old. The scheduler keeps trying to reconnect.' };
+  if (view.stale) return { title: 'The fleet feed is stale' + (age != null ? ` (${dur(Math.round(age))} old).` : '.'), note: 'Remote zones are not used for new loads until it recovers; models that are already loaded keep serving.' };
+  if (!view.connected) return { title: 'The fleet feed is disconnected.', note: 'The zone figures may be old. The scheduler keeps trying to reconnect.' };
   return null;
 }
 
@@ -196,7 +202,7 @@ const narrow = window.matchMedia('(max-width:860px)');
 let strip = null; // the slot box above the screen, used at phone width and while the menu is closed
 
 // setShellSlot('run', node) shows a node in the shell: in the section menu
-// above the fleet card, or (at phone width, or while the menu is closed) in a
+// at its foot, or (at phone width, or while the menu is closed) in a
 // strip above the screen. null removes it. The node is yours: update it in
 // place (morph into it); the shell only decides where it sits and never
 // re-creates or re-wraps it.
@@ -211,10 +217,13 @@ function placeSlots() {
   if (!root) return;
   const inMenu = !narrow.matches && !root.classList.contains('menu-closed');
   const menuBox = root.querySelector('.menu .slotbox');
-  const box = inMenu ? menuBox : strip;
-  if (!box) return;
+  // the Benchmarks pages draw the run themselves (the Overview's run card,
+  // the list's "Running now" row; board Bench-Group has no strip): there the
+  // strip stays empty
+  const box = inMenu ? menuBox : route.id === 'benchmarks' ? null : strip;
+  if (!box && (inMenu || route.id !== 'benchmarks')) return;
   const want = Object.keys(slots).map(k => slots[k]);
-  for (const n of want) if (n.parentNode !== box) box.appendChild(n);
+  if (box) for (const n of want) if (n.parentNode !== box) box.appendChild(n);
   for (const other of [strip, menuBox]) {
     if (!other) continue;
     for (const c of Array.from(other.children)) if (!want.includes(c) || other !== box) c.remove();
@@ -324,8 +333,9 @@ function menuItem(p, c) {
   let nb = null;
   if (p.id === 'models' && !p.link && c.models) nb = h('span.nb', { title: plural(c.models, 'model') + ' loaded' }, num(c.models));
   if (p.id === 'queue' && c.queue) nb = h('span.nb', { title: plural(c.queue, 'request') + ' waiting' }, num(c.queue));
+  if (p.count) { const n = p.count(); if (n) nb = h('span.nb.cnt', { title: n === 1 ? '1 ' + p.countWord : num(n) + ' ' + (p.countWords || p.countWord + 's') }, num(n)); }
   if (p.id === 'zones' && c.zonesBad) nb = h('span.nb.alert', { title: plural(c.zonesBad, 'zone') + ' need a look' }, num(c.zonesBad));
-  const attrs = { href: href(p.id, p.rest), 'aria-current': on_ ? 'page' : null, onclick: closeDrawer, key: 'p-' + p.id + (p.rest ? '-' + p.rest.join('-') : '') };
+  const attrs = { href: href(p.id, p.rest), 'aria-current': on_ && !p.link ? 'page' : null, onclick: closeDrawer, key: 'p-' + p.id + (p.rest ? '-' + p.rest.join('-') : '') };
   if (p.desc) return h('a', Object.assign({ class: 'nd' + (on_ ? ' on' : '') }, attrs), h('b', p.label, nb), h('span', p.desc));
   return h('a', Object.assign({ class: 'ni' + (on_ ? ' on' : '') }, attrs), p.label, nb);
 }
@@ -333,15 +343,15 @@ function menuItem(p, c) {
 function menuNode() {
   const s = sectionOf(route) || NAV[0];
   const c = counts();
-  const f = fleetFacts();
   return [
     h('div.menu-head', { key: 'head' },
       h('div', h('b', s.label), h('span', 'Potluck')),
       h('button.menu-close', { type: 'button', 'aria-label': 'Close menu', title: 'Close menu', onclick: () => setMenuClosed(true) }, icon(I.close))),
     h('nav', { 'aria-label': s.label + ' pages', key: 'pages', style: 'display:flex;flex-direction:column;gap:4px' }, s.pages.map(p => menuItem(p, c))),
+    // the foot holds the slots (the Benchmarks run card); no health card: the
+    // heart in the rail carries it (the owner's note 2, 25 Nov)
     h('div.menu-foot', { key: 'foot' },
-      h('div.slotbox', { key: 'slots', 'data-keep': '' }),
-      h('div.fleet', { role: 'status' }, h('b', h('span', { class: 'dot ' + (f.dot || '') }), f.title), h('span', f.note))),
+      h('div.slotbox', { key: 'slots', 'data-keep': '' })),
   ];
 }
 

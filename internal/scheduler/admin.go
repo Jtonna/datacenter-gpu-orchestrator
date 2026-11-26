@@ -14,7 +14,11 @@ var ErrBusy = errors.New("scheduler: model busy")
 
 // unload stops one instance if idle; force stops it whatever it is doing
 // (the one way a running generation is cut off, design 9).
-func (c *schedCore) unload(profile string, force bool) error {
+func (c *schedCore) unload(profile string, force bool) error { return c.unloadFor(profile, force, "") }
+
+// unloadFor is unload; why says, to the requests a forced unload cuts, why
+// (cutAnswer).
+func (c *schedCore) unloadFor(profile string, force bool, why string) error {
 	in := c.insts[profile]
 	if in == nil {
 		return ErrNotLoaded
@@ -22,6 +26,7 @@ func (c *schedCore) unload(profile string, force bool) error {
 	switch in.state {
 	case stStopping:
 		if force {
+			in.markCut(cutAnswer(profile, why))
 			c.stopFor(in, stopKill, "admin")
 		}
 		return nil
@@ -44,10 +49,40 @@ func (c *schedCore) unload(profile string, force bool) error {
 		mode := stopGraceful
 		if in.inFlight > 0 {
 			mode = stopKill
+			in.markCut(cutAnswer(profile, why))
 		}
 		c.stopFor(in, mode, "admin")
 		return nil
 	}
+}
+
+// cutAnswer is what a request in flight cut by a forced unload is told:
+// 503 unloaded, "<profile> was unloaded[: why]", the answer a loading or
+// queued caller gets.
+func cutAnswer(profile, why string) *Error {
+	msg := profile + " was unloaded"
+	if why != "" {
+		msg += ": " + why
+	}
+	return err503(ReasonUnloaded, msg, queueRetryAfter)
+}
+
+// cancelQueued answers every request waiting in the queue for one of
+// profiles 503 unloaded, the answer a forced unload gives a loading
+// instance's waiters, and removes the entry with its claim. It returns how
+// many requests it answered. Only an owner's model delete with interrupt
+// calls it (models slice 3); nothing automatic does.
+func (c *schedCore) cancelQueued(profiles []string) int {
+	n := 0
+	for _, name := range profiles {
+		e := c.entries[name]
+		if e == nil {
+			continue
+		}
+		n += len(e.waiters)
+		c.answerEntry(e, err503(ReasonUnloaded, fmt.Sprintf("%s was unloaded: its model file is being deleted", name), queueRetryAfter))
+	}
+	return n
 }
 
 // unloadIdle stops every ready instance with in_flight == 0 and returns

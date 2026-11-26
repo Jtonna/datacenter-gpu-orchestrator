@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -45,6 +44,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
@@ -108,7 +108,11 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 // estimate that is several times too high.
 func warnSlidingWindow(cfg *config.Config, log *slog.Logger) {
 	for _, p := range cfg.ProfilesWithoutNeedsMiB() {
-		path := filepath.Join(cfg.ModelsDir, p.Model)
+		path, err := modelpath.Join(cfg.ModelsDir, p.Model)
+		if err != nil {
+			log.Warn("profile's model path is refused; its load will be refused", "profile", p.Name, "err", err)
+			continue
+		}
 		meta, err := gguf.ReadMeta(path)
 		if err != nil {
 			log.Warn("cannot read GGUF metadata; the memory estimate will fail for this profile", "profile", p.Name, "model", path, "err", err)
@@ -206,11 +210,19 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// empty: the scheduler stays up unhealthy with the reason (unhealthy.go).
 	var dbStore *bench.Store
 	var cs *cfgstore.Store
-	st, err := bench.OpenStore(boot.DataDir)
+	// Only the bench tables ahead of this build (a newer version's bench
+	// migration) switch off the benchmarks alone: the rest of the file is
+	// in use as usual (bench.OpenShared). Every other failure is unhealthy.
+	st, err := bench.OpenShared(boot.DataDir)
 	if err != nil {
 		return serveUnhealthy(boot, log, sigs, storeFailure(err))
 	}
 	dbStore = st
+	benchOff := ""
+	if ne := st.BenchOff(); ne != nil {
+		benchOff = ne.BenchOffReason()
+		log.Warn(benchOff+"; the rest of the scheduler runs as usual and the benchmark tables are left as they are", "data_dir", boot.DataDir)
+	}
 	defer func() { dbStore.Close(); stepDone("store closed", dbStore) }() // the last step: every user of the store has stopped
 	if cs, err = cfgstore.Open(st); err != nil {
 		return serveUnhealthy(boot, log, sigs, "the configuration tables cannot be opened: "+err.Error())
@@ -226,7 +238,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		curCfg atomic.Pointer[config.Config]
 		curPl  atomic.Pointer[pool.Pool]
 	)
-	so0 := cfgsvc.Options{Store: cs, Boot: boot, Logger: log,
+	var trained gguf.ContextCache // a write that sets ctx above a model's trained context is refused (config.Options.TrainedCtx)
+	so0 := cfgsvc.Options{Store: cs, Boot: boot, Logger: log, Parse: config.Options{TrainedCtx: trained.TrainedCtx},
 		ProfileRefs: func(id string) []string { return benchmarksUsing(dbStore, id) },
 		Apply: func(c *config.Config) {
 			curCfg.Store(c)
@@ -399,6 +412,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 				so.HostReadings = func() []history.Event { // host overheads of the release before device counts
 					return hist.Query(history.Query{Types: []string{history.TLearnedNeed}, Text: "host overhead", Limit: history.MaxLimit}).Events
 				}
+				so.DeviceHistory = hist.Query // per-device rows: was each one's load cold?
 			}
 		}
 	}
@@ -428,11 +442,14 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		pl.SetForceUnload(sched.ForceUnloadNode)
 	}
 
-	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log)
-	ao := api.Options{Logger: log, History: hist, Requests: usage.NewRecorder(usageStore), Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
+	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log) // nil, nil while benchOff
+	ao := api.Options{Logger: log, History: hist, Requests: usage.NewRecorder(usageStore), Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, BenchOffReason: benchOff, Config: svc,
 		System: api.SystemInfo{Listen: cfg.Listen, Safety: safetySummary(cfg), HistoryDir: cfg.HistoryDir, DataDir: cfg.DataDir,
 			ChildLogDir: cfg.ChildLogDir, ModelsDir: cfg.ModelsDir, Bench: map[string]any{"enabled": benchMgr != nil, "regress_load_pct": cfg.Bench.RegressLoadPct,
 				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}
+	if benchOff != "" {
+		ao.System.Bench["off_reason"] = benchOff
+	}
 	if cs != nil {
 		ao.Audit = cs
 	}
@@ -451,6 +468,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	}
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
+	apiSrv.RepairTrash(context.Background()) // a model delete or restore a kill left half done (models slice 3); after started, so profiles it adds back reach the scheduler
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).
 	mcpSrv := mcpserver.New(apiSrv, mcpserver.Options{Version: version, Guide: docs.BenchmarkGuide,
 		Bridge:   func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) },

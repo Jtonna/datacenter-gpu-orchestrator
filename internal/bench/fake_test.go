@@ -87,9 +87,12 @@ type fakeAPI struct {
 	// mem gives a node's available memory for the status (nil: unknown);
 	// loading says whether an instance is starting, chats counts the chat
 	// requests sent so far.
-	mem      func(id string, loading bool, chats int) *int64
-	loadMode string       // instances' load_mode
-	reload   []NodeReload // the plan's reload_from_cache
+	mem func(id string, loading bool, chats int) *int64
+	// growth and reserveKiB are the plan's growth_history and fill_reserve_kib_per_token (nil: not said).
+	growth     *GrowthHistory
+	reserveKiB *int
+	loadMode   string       // instances' load_mode
+	reload     []NodeReload // the plan's reload_from_cache
 	// The file cache eviction (POST /api/cache/evict): planNodes are the
 	// nodes the plan names (default n1); evictNode scripts a node's answers
 	// in turn (the last one repeats; default: dropped to 0); evictLocal is
@@ -112,6 +115,23 @@ type fakeAPI struct {
 	made     map[string]map[string]any
 	madeN    int // EnsureProfile calls
 	makeErr  error
+	// context_fill: the plan's ctx and shape_shared_with (nil: not said).
+	planCtx       int
+	shapeShared   *[]SharedProfile
+	planGenerated *bool // the plan's generated for the profile itself (nil: not said)
+	// reportEvery > 0: each node reports its memory once per interval, as an
+	// agent.s heartbeat does; the status shows the last report and its time
+	// (SampleAt). 0: every status read is a fresh sample taken now. withhold
+	// drops a node.s report (the agent is silent) given the chats sent so far.
+	reportEvery time.Duration
+	withhold    func(id string, chats int) bool
+	noTime      func(id string) bool // the node's figure has no sample time (the scheduler's own machine)
+	// ctxServed and ctxNote are every instance's ctx_served and ctx_note in
+	// the status (the server's own context per slot, realctx.go).
+	ctxServed   *int
+	ctxNote     string
+	reportEpoch time.Time
+	reports     map[string]fakeReport
 }
 
 func (f *fakeAPI) Consoles(ctx context.Context) ([]Console, error) {
@@ -195,7 +215,12 @@ func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if nodes == nil {
 		nodes = []string{"n1"}
 	}
-	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...),
+	var shared *[]SharedProfile
+	if f.shapeShared != nil {
+		s := append([]SharedProfile{}, *f.shapeShared...)
+		shared = &s
+	}
+	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...), Ctx: f.planCtx, SharedWith: shared, Generated: f.planGenerated, Growth: f.growth, ReserveKiB: f.reserveKiB,
 		Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
 }
 
@@ -370,6 +395,9 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 		p := f.profs[name]
 		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight + f.stuck[name], LogFile: "/var/log/llm-children/" + name + ".log",
 			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 192.0.2.2:50052", DeviceTotalMiB: 7900, LoadMode: f.loadMode}
+		if f.ctxServed != nil || f.ctxNote != "" { // else an older scheduler: no context fields
+			ii.Ctx, ii.CtxServed, ii.CtxNote = f.planCtx, f.ctxServed, f.ctxNote
+		}
 		if p != nil {
 			ii.ModelFile = p.modelFile
 			for k := range p.nodes {
@@ -403,7 +431,7 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 			chats += n
 		}
 		for i := range st.Workers {
-			st.Workers[i].AvailMiB = f.mem(st.Workers[i].ID, loading, chats)
+			st.Workers[i].AvailMiB, st.Workers[i].SampleAt = f.report(st.Workers[i].ID, loading, chats)
 		}
 	}
 	for name, until := range f.gone { // an unloaded instance lingers for a moment
@@ -572,4 +600,52 @@ func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 		}
 	}
 	return resp, nil
+}
+
+// Tokenize implements Tokenizer: a quarter of the characters, as the chat's prompt_n.
+func (f *fakeAPI) Tokenize(ctx context.Context, profile, text string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.insts[profile]; !ok {
+		return 0, fmt.Errorf("/tokenize answered 404: model %s is not loaded", profile)
+	}
+	return len(text) / 4, nil
+}
+
+// fakeReport is a node's last memory report: its interval number, figure and time.
+type fakeReport struct {
+	k  int64
+	v  *int64
+	at time.Time
+}
+
+// report is a node's figure and its sample time as the status shows them
+// (f.mu held): see reportEvery and withhold.
+func (f *fakeAPI) report(id string, loading bool, chats int) (*int64, time.Time) {
+	if f.reportEvery <= 0 {
+		v := f.mem(id, loading, chats)
+		if v == nil {
+			return nil, time.Time{}
+		}
+		return v, time.Now()
+	}
+	if f.reportEpoch.IsZero() {
+		f.reportEpoch = time.Now()
+	}
+	if f.reports == nil {
+		f.reports = map[string]fakeReport{}
+	}
+	k := int64(time.Since(f.reportEpoch) / f.reportEvery)
+	r, ok := f.reports[id]
+	if (!ok || k > r.k) && (f.withhold == nil || !f.withhold(id, chats)) {
+		r = fakeReport{k: k, v: f.mem(id, loading, chats), at: f.reportEpoch.Add(time.Duration(k) * f.reportEvery)}
+		f.reports[id] = r
+	}
+	if r.v == nil {
+		return nil, time.Time{}
+	}
+	if f.noTime != nil && f.noTime(id) {
+		return r.v, time.Time{}
+	}
+	return r.v, r.at
 }

@@ -205,7 +205,7 @@ func TestSchemaDescribesEveryPhaseAndTemplatesAreValid(t *testing.T) {
 			t.Errorf("%+v", k)
 		}
 	}
-	if len(d.Templates) != 8 {
+	if len(d.Templates) != 9 {
 		t.Fatalf("%d templates", len(d.Templates))
 	}
 	for _, tp := range d.Templates {
@@ -220,7 +220,7 @@ func TestSchemaDescribesEveryPhaseAndTemplatesAreValid(t *testing.T) {
 		if tp.Name == "" || tp.Description == "" {
 			t.Errorf("%+v", tp)
 		}
-		if tp.ID == TemplateRecipe && !b.IsRecipe() {
+		if (tp.ID == TemplateRecipe || tp.ID == TemplateContextFill) && !b.IsRecipe() {
 			t.Errorf("the recipe template is not a recipe")
 		}
 		if tp.ID == TemplateTasks && (len(b.Phases) != 3 || b.Phases[1].Type != PhaseTasks || b.Phases[1].Tasks == nil) {

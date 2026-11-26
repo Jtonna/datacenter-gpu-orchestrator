@@ -66,34 +66,29 @@ func get(t *testing.T, url string) (int, string) {
 	return r.StatusCode, string(b)
 }
 
-// A database a newer version migrated (schema one higher than this build
-// knows): the scheduler does not come up healthy with an empty
-// configuration. It stays up, /health answers 503 with the reason, every
-// other route answers 503, and it loads nothing. Stopping it is clean.
+// A database whose configuration tables a newer version migrated (their
+// ledger one higher than this build knows): the scheduler does not come up
+// healthy with an empty configuration. It stays up, /health answers 503
+// with the reason, every other route answers 503, and it loads nothing.
+// Stopping it is clean. (Bench tables ahead alone switch off only the
+// benchmarks: bench_newer_test.go.)
 func TestNewerDatabaseIsUnhealthyNotEmpty(t *testing.T) {
-	data := t.TempDir()
-	st, err := bench.OpenStore(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	have, _ := st.SchemaVersion()
-	st.Close()
-	db, err := sql.Open("sqlite", filepath.Join(data, bench.DBFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO migrations (version, name, applied_at) VALUES (?, 'from a newer version', 0)`, have+1); err != nil {
+	data := importSeed(t)
+	db := openDB(t, data)
+	var have int
+	db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM cfg_migrations`).Scan(&have)
+	if _, err := db.Exec(`INSERT INTO cfg_migrations (version, applied_at) VALUES (?, 0)`, have+1); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
 
 	addr, logs, stop := startOn(t, data)
 	code, body := get(t, "http://"+addr+"/health")
-	want := "database is newer than this version: " + itoa(have+1) + " > " + itoa(have)
+	want := "the configuration tables are at version " + itoa(have+1) + " but this build knows " + itoa(have)
 	if code != 503 || !strings.Contains(body, want) {
 		t.Fatalf("/health %d %q, want 503 with %q", code, body, want)
 	}
-	for _, p := range []string{"/api/config", "/api/profiles", "/v1/models", "/api/system"} {
+	for _, p := range []string{"/api/config", "/api/profiles", "/v1/models", "/api/system", "/api/bench/state"} {
 		if code, body := get(t, "http://"+addr+p); code != 503 || !strings.Contains(body, want) {
 			t.Fatalf("%s %d %q", p, code, body)
 		}
@@ -115,11 +110,13 @@ func TestNewerDatabaseIsUnhealthyNotEmpty(t *testing.T) {
 	if c := stop(); c != 1 {
 		t.Fatalf("exit %d, want 1 (it never served)", c)
 	}
-	// the database is left as it was
-	st2, err := bench.OpenStore(data)
-	if err == nil {
-		st2.Close()
-		t.Fatal("the newer database was changed")
+	// the ledger is left as it was
+	db = openDB(t, data)
+	defer db.Close()
+	var now int
+	db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM cfg_migrations`).Scan(&now)
+	if now != have+1 {
+		t.Fatalf("cfg_migrations at %d, was %d", now, have+1)
 	}
 }
 

@@ -59,6 +59,10 @@ const (
 	runsWindow         = time.Hour
 	runsProblemMin     = 5 // failures in the hour, at least, for problem
 	healthStatusWait   = time.Second
+	// healthReuse: a status read this recently (by the status loop, every
+	// 2 s while a page is open) is what health judges, instead of a read of
+	// its own
+	healthReuse = 3 * time.Second
 )
 
 // HealthRow is one row of the popup.
@@ -119,6 +123,10 @@ type healthState struct {
 	// the evaluations of the push.
 	wake  chan struct{}
 	evals atomic.Int64
+	// asked counts the scheduler status reads health made itself (a status
+	// read by the status loop or GET /api/status within healthReuse is used
+	// instead)
+	asked atomic.Int64
 	// mu guards what one evaluation of the push owns: the signature of
 	// the last frame sent and the clients waiting for their first frame.
 	mu      sync.Mutex
@@ -251,7 +259,15 @@ func healthSig(sum HealthSummary) string {
 // healthStatus is the scheduler's status, or the last good one (fresh
 // false, nil before the first) when the loop does not answer in a second.
 func (s *Server) healthStatus(ctx context.Context) (st *scheduler.Status, at time.Time, fresh bool) {
+	// the status the live channel's loop (or GET /api/status) read a moment
+	// ago: one read of the scheduler's loop serves both topics
+	if last, lastAt := s.health.last.Load(), s.health.lastAt.Load(); last != nil {
+		if now := s.opts.Now(); now.Sub(time.UnixMilli(lastAt)) <= healthReuse {
+			return last, time.UnixMilli(lastAt), true
+		}
+	}
 	if s.sched != nil {
+		s.health.asked.Add(1)
 		c, cancel := context.WithTimeout(ctx, healthStatusWait)
 		v, err := s.sched.Status(c)
 		cancel()
@@ -306,6 +322,10 @@ func (s *Server) healthSummary(ctx context.Context) HealthSummary {
 		judgeQueue(st, queueTimeout),
 		judgeAlerts(),
 	}
+	if why := s.opts.BenchOffReason; why != "" {
+		rows = append(rows, HealthRow{ID: "benchmarks", Label: "Benchmarks", State: HealthAttention, Text: why, Count: 1,
+			Link: "#/benchmarks", Facts: map[string]any{"enabled": false}})
+	}
 	return summarize(rows, s.recentEvents(now), now)
 }
 
@@ -316,7 +336,7 @@ func (s *Server) taskStats() []supervise.TaskStats {
 	return supervise.Stats()
 }
 
-// runsIn is what the Runs row judges.
+// runsIn is what the Requests row (id "runs") judges.
 type runsIn struct {
 	logOn          bool
 	failed, total  int64 // client requests in the hour: failed or refused, and all finished
@@ -443,9 +463,16 @@ func judgeZones(st *scheduler.Status, facts []pool.NodeFacts, fresh bool, at tim
 
 // judgeRuns: failed or refused client requests in the last hour, plus
 // failed benchmark runs. Any is attention; at least five making more than
-// half of the hour's requests is a problem.
+// half of the hour's requests is a problem. The row keeps its id "runs";
+// its label is "Requests" (the owner, 24 Nov: "Runs" are benchmark runs
+// only). Its link opens the Requests page on its Failed state (the page
+// reads ?status=), or Benchmarks when only benchmark runs failed.
 func judgeRuns(in runsIn) HealthRow {
-	row := HealthRow{ID: "runs", Label: "Runs", Link: "#/overview?runs=failed",
+	link := "#/requests?status=failed"
+	if in.failed == 0 && in.benchFailed > 0 {
+		link = "#/benchmarks"
+	}
+	row := HealthRow{ID: "runs", Label: "Requests", Link: link,
 		Facts: map[string]any{"request_log": map[bool]string{true: "on", false: "off"}[in.logOn], "failed_requests": in.failed, "requests": in.total,
 			"failed_bench_runs": in.benchFailed, "bench_runs": nonNil(in.benchFailedIDs), "more": in.capped}}
 	if !in.logOn {
@@ -854,8 +881,17 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 		d = map[string]any{"path": e.Path, "state": e.State, "total_bytes": e.TotalBytes, "free_bytes": e.FreeBytes, "used_bytes": e.UsedBytes,
 			"used_percent": e.UsedPercent, "model_bytes": e.PotluckBytes, "files": e.FileCount, "checked_at": e.CheckedAt}
 	}
-	if c := s.conf(); c != nil && c.ModelsDiskBudgetGB > 0 {
-		d["budget_bytes"] = int64(c.ModelsDiskBudgetGB) * 1_000_000_000
+	if c := s.conf(); c != nil {
+		if c.ModelsDiskBudgetGB > 0 {
+			d["budget_bytes"] = int64(c.ModelsDiskBudgetGB) * 1_000_000_000
+		}
+		if h := c.LocalNodeName(); h != "" {
+			d["host"] = h // the machine the models folder is on ("free on <host>")
+		}
+	}
+	s.trashDisk(d) // trash_bytes, trash_count, next_purge_at, trash_purge_on (trash.go)
+	if wr, ok := s.modelsWritable(); ok {
+		d["models_writable"] = wr // read without writing; left out when it cannot be told (trash.go)
 	}
 	b, err := json.Marshal(d)
 	if err != nil {
@@ -863,7 +899,7 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 	}
 	out := make([]byte, 0, len(list)+len(b)+10)
 	out = append(append(append(out, `{"disk":`...), b...), ',')
-	if len(list) > 2 && list[1] == '}' {
+	if list[1] == '}' { // an empty document: no comma after the disk
 		out = out[:len(out)-1]
 	}
 	return append(out, list[1:]...)

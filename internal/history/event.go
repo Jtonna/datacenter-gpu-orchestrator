@@ -86,6 +86,12 @@ const (
 	// loop_step_warn_ms (at most one a minute; scheduler/loophealth.go).
 	TLoopSlowStep = "loopSlowStep"
 
+	// TContextMismatch: after a load, the model server reports (/props) a
+	// context per slot other than the one the plan was for (warn). Data:
+	// ctx (planned), served_ctx, and ctx_asked when the plan used the
+	// trained context (scheduler/realctx.go).
+	TContextMismatch = "contextMismatch"
+
 	// An MCP access key expires within 7 days (sent once), within 1 day
 	// (once), or has expired (once). Data: agent_id, name, key_hint,
 	// expires_at, days_left; never the key (api/keyexpiry.go).
@@ -96,6 +102,12 @@ const (
 	// previous run (data machines: [{id, name, last_seen}]). One event for
 	// the fleet, naming no node.
 	TKnownMachines = "knownMachines"
+
+	// TModelRemoved: a model file was erased from the models trash for good,
+	// by "Remove for good" or by the timed clearing (models slice 4). Data:
+	// file, trash_id, size_bytes, reason (owner or clearing), profiles,
+	// deleted_at, removed_by. Model file: the file.
+	TModelRemoved = "modelRemoved"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

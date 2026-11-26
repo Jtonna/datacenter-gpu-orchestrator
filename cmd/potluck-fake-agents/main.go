@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -102,6 +103,10 @@ type Options struct {
 	WorkerPort     int
 	AcceptLaunches bool
 	Heartbeat      time.Duration
+	// MemFile, when set, is read every heartbeat: a JSON object of node id or
+	// name to MemAvailable MiB; a listed node reports that figure from then
+	// on (a scripted memory drop for a context fill's stop line).
+	MemFile string
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -122,6 +127,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.AcceptLaunches, "accept-launches", false, "accept launches and report a fake running worker (default: refuse every launch)")
 	fs.DurationVar(&o.Heartbeat, "heartbeat", 2*time.Second, "heartbeat interval (the scheduler asks for 2 s)")
 	fs.BoolVar(&printOnly, "print", false, "print the node list as JSON and exit")
+	fs.StringVar(&o.MemFile, "mem-file", "", "a JSON file of node id or name to MemAvailable MiB, read every heartbeat: a listed node reports that figure (scripted memory drop); a key silent:<id or name> with N withholds that agent's reports for N s (at most 8)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -190,7 +196,9 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 	for _, n := range nodes {
 		a := &fakeagent.Agent{ID: n.ID, Name: n.Name, Addr: n.Addr, AgentPort: o.AgentPort, WorkerPort: o.WorkerPort, Potluck: base,
 			Release: rel, Install: agentproto.InstallBare, MemAvail: n.MemAvailableMiB, MemTotalMiB: n.MemTotalMiB,
-			GPUs: n.GPUs, Devices: n.Devices, WatchdogFloorMiB: n.WatchdogFloorMiB, HeartbeatEvery: o.Heartbeat,
+			// its own copies: the node rows stay with the fleet (followMemFile
+			// reads them) and the agent's setters write only the agent's
+			GPUs: slices.Clone(n.GPUs), Devices: slices.Clone(n.Devices), WatchdogFloorMiB: n.WatchdogFloorMiB, HeartbeatEvery: o.Heartbeat,
 			Stats: statsOf(n)}
 		if n.Capabilities != nil {
 			a.Capabilities = *n.Capabilities
@@ -211,6 +219,11 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 				n.Name, net.JoinHostPort(n.Addr, fmt.Sprint(o.AgentPort)), err)
 		}
 		f.Agents = append(f.Agents, a)
+	}
+	if o.MemFile != "" {
+		// Read every 100 ms (not once per heartbeat): a key takes effect at most
+		// 100 ms after it is written, before the next heartbeat goes out.
+		go f.followMemFile(ctx, o.MemFile, min(o.Heartbeat, memFilePoll), nodes, out)
 	}
 	mode := "launches refused"
 	if o.AcceptLaunches {
@@ -424,4 +437,58 @@ func assignAddrs(nodes []Node, base string) error {
 		}
 	}
 	return nil
+}
+
+// memFilePoll is how often the memory file is read.
+const memFilePoll = 100 * time.Millisecond
+
+// followMemFile applies the memory file every interval until ctx ends: a
+// node listed by id or name reports that MemAvailable (and the same
+// available memory in its stats). A missing or bad file changes nothing.
+func (f *Fleet) followMemFile(ctx context.Context, file string, every time.Duration, nodes []Node, out io.Writer) {
+	applied := map[string]int64{}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if b, err := os.ReadFile(file); err == nil {
+			var want map[string]int64
+			if json.Unmarshal(b, &want) == nil {
+				for _, a := range f.Agents {
+					// "silent:<id or name>": N withholds that agent's reports for N s
+					// (at most 8 s, short of the pool's LostAfter), once per new N.
+					key := "silent:" + a.ID
+					s, ok := want[key]
+					if !ok {
+						key = "silent:" + a.Name
+						s, ok = want[key]
+					}
+					if ok && s > 0 && applied[key] != s {
+						d := time.Duration(min(s, 8)) * time.Second
+						a.SilentFor(d)
+						applied[key] = s
+						fmt.Fprintf(out, "  %-20s withholds its reports for %s (%s)\n", a.Name, d, file)
+					}
+				}
+				for i, a := range f.Agents {
+					v, ok := want[a.ID]
+					if !ok {
+						v, ok = want[a.Name]
+					}
+					if !ok || applied[a.ID] == v {
+						continue
+					}
+					n := nodes[i]
+					n.MemAvailableMiB = v
+					a.SetMemAvail(v, statsOf(n))
+					applied[a.ID] = v
+					fmt.Fprintf(out, "  %-20s now reports %d MiB available (%s)\n", a.Name, v, file)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

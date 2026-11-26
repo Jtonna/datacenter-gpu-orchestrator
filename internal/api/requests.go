@@ -33,6 +33,11 @@ func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *
 		Caller: s.defaultUser(), CallerKind: "default"}
 	if p != nil {
 		b.Profile, b.ModelFile, b.Ctx = p.Name, p.Model, p.Ctx
+		// A run-scoped profile (scheduler/scoped.go) is logged under its
+		// production id; the requested name keeps the scope.
+		if base, _, ok := scheduler.SplitScoped(p.Name); ok && s.conf().Profiles[p.Name] == nil {
+			b.Profile = base
+		}
 	}
 	if _, name, ok := audit.AgentFrom(r.Context()); ok {
 		b.Caller, b.CallerKind = name, "key"
@@ -42,7 +47,7 @@ func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *
 
 // leasePlacement is where an admitted request runs.
 func leasePlacement(l *scheduler.Lease) usage.Placement {
-	pl := usage.Placement{SchedID: l.ID, Instance: l.Instance, Session: l.Session, Nodes: make([]usage.Node, len(l.Nodes))}
+	pl := usage.Placement{SchedID: l.ID, Instance: l.Instance, Session: l.Session, Ctx: l.Ctx, Nodes: make([]usage.Node, len(l.Nodes))}
 	for i, n := range l.Nodes {
 		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role, Share: n.Share}
 		if n.Role == scheduler.RoleHost {
@@ -79,8 +84,9 @@ func resultEnd(res proxy.Result) usage.End {
 	case reason != "":
 		e.Status, e.Reason = usage.StatusFailed, reason
 		e.Message = map[string]string{"stall": "the model stopped sending", "cut": "the zone dropped the connection",
-			"upstream_error": "the model server could not be reached", "aborted": "the answer could not be delivered"}[reason]
-		if res.Err != nil {
+			"upstream_error": "the model server could not be reached", "aborted": "the answer could not be delivered",
+			"unloaded": "it was unloaded while it ran (a forced unload)"}[reason]
+		if res.Err != nil && !res.Unloaded { // a cut request's reason is known: the transport's word (EOF) is noise there
 			e.Message += ": " + res.Err.Error()
 		}
 	case res.Status >= 400:

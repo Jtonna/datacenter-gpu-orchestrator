@@ -80,8 +80,11 @@ func (c *schedCore) hostReadingFor(id core.NodeID, p *core.Profile) bool {
 		return false
 	}
 	shape := shapeOf(p)
+	setting := max(c.cfg.Defaults.HostOverheadMiB, 0)
 	for k, e := range c.hostOHs {
-		if k.shape == shape && k.node == id && !c.otherModelFile(p, e) && (!e.restored || c.buildsAgree(e.LlamaBuild)) {
+		// as hostOverheadOf: a restored reading of another llama build is
+		// used only when it raises the setting
+		if k.shape == shape && k.node == id && !c.otherModelFile(p, e) && (!e.restored || c.buildsAgree(e.LlamaBuild) || e.MiB > setting) {
 			return true
 		}
 	}

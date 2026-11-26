@@ -82,11 +82,11 @@ var Metrics = []MetricDef{
 	{"node_memory_mib", "MiB", "Memory the model took on one machine.", []string{"load"}, true, nil},
 	{"lowest_available_load_mib", "MiB", "Lowest available memory of one machine while the model loaded.", []string{"step"}, true, hib(true)},
 	{"lowest_available_mib", "MiB", "Lowest available memory of one machine over the whole step.", []string{"step"}, true, hib(true)},
-	{"ttft_ms", "ms", "Time to first token of one request, turn or task.", []string{"warmup", "requests", "hold", "conversation", "tasks"}, false, hib(false)},
+	{"ttft_ms", "ms", "Time to first token of one request, turn or task.", []string{"warmup", "requests", "hold", "conversation", "tasks", "context_fill"}, false, hib(false)},
 	{"decode_tps", "tok/s", "Tokens per second while generating.", []string{"warmup", "requests", "hold", "conversation", "concurrent_requests", "tasks"}, false, hib(true)},
-	{"prefill_tps", "tok/s", "Prompt tokens per second.", []string{"warmup", "requests", "hold", "conversation", "concurrent_requests"}, false, hib(true)},
-	{"wall_ms", "ms", "Total time of one request, turn or task.", []string{"warmup", "requests", "hold", "conversation", "concurrent_requests", "tasks"}, false, hib(false)},
-	{"prompt_tokens", "tokens", "Prompt tokens of one request, turn or task (processed and reused).", []string{"warmup", "requests", "hold", "conversation", "tasks"}, false, nil},
+	{"prefill_tps", "tok/s", "Prompt tokens per second.", []string{"warmup", "requests", "hold", "conversation", "concurrent_requests", "context_fill"}, false, hib(true)},
+	{"wall_ms", "ms", "Total time of one request, turn or task.", []string{"warmup", "requests", "hold", "conversation", "concurrent_requests", "tasks", "context_fill"}, false, hib(false)},
+	{"prompt_tokens", "tokens", "Prompt tokens of one request, turn or task (processed and reused).", []string{"warmup", "requests", "hold", "conversation", "tasks", "context_fill"}, false, nil},
 	{"reused_tokens", "tokens", "Prompt tokens reused from the cache.", []string{"warmup", "requests", "hold", "conversation"}, false, hib(true)},
 	{"completion_tokens", "tokens", "Tokens generated.", []string{"warmup", "requests", "hold", "conversation", "tasks"}, false, nil},
 	{"held_s", "s", "Seconds the model stayed idle in a hold phase.", []string{"hold"}, false, nil},
@@ -95,6 +95,10 @@ var Metrics = []MetricDef{
 	{"errors", "count", "Simultaneous requests that failed.", []string{"concurrent_requests"}, false, hib(false)},
 	{"unload_s", "s", "Seconds from the unload request until the instance was gone.", []string{"unload"}, false, hib(false)},
 	{"task_points", "points", "A scorer's points for one task, of its max_points (posted after the run).", []string{"tasks"}, false, hib(true)},
+	{"fill_tokens", "tokens", "Tokens the context held after a context_fill turn (prompt and answer); the condition fill_pct is the mark.", []string{"context_fill"}, false, nil},
+	{"fill_growth_mib", "MiB", "How much one machine's available memory fell from the start of a context_fill phase to a mark.", []string{"context_fill"}, true, hib(false)},
+	{"fill_kib_per_token", "KiB", "That fall per token held: the memory the context takes per token on one machine.", []string{"context_fill"}, true, hib(false)},
+	{"recall_correct", "count", "Facts planted in a context_fill phase's filler that the last turn gave back right, of those planted.", []string{"context_fill"}, false, hib(true)},
 }
 
 // MetricNames is the set of metric names.
@@ -321,6 +325,8 @@ func measurementsOf(st *Step) []Measurement {
 					add(p, "completion_tokens", float64(t.PredictedN), "tokens", mod)
 				}
 			}
+		case "context_fill":
+			fillRows(p, add, afterLoad, cond)
 		case "concurrent_requests":
 			c := p.Concurrent
 			if c == nil {

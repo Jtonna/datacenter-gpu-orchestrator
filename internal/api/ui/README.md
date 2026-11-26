@@ -20,10 +20,9 @@ core/charts.js      every chart and the chart tooltip: inline SVG and plain boxe
 core/catalog.js     the model catalog, kept for the life of the page (fed by the live channel)
 core/avatar.js      the picture of a model: the owner's icon, else a drawn tile
 core/rate.js        the pass rate as dots (passDots)
-views/<id>.js       the screens next/ does not rebuild (nodes, queue, activity, benchmarks, tiers,
+views/<id>.js       the screens next/ does not rebuild (nodes, queue, activity, tiers,
                     audit, mcp, about); each registers itself
 views/models/       the instance card and the model page of the Models screen
-views/benchmarks/   the parts of Benchmarks; pages.js is a suite's and a benchmark's own page
 fonts/              Manrope (variable) and JetBrains Mono, with their licences (OFL)
 ```
 
@@ -79,6 +78,9 @@ next/views/zones.js    Zones: one row per machine (zone); selection with Stop ac
 next/core/modelactions.js  the model actions: plan, load on chosen zones, drain, undrain, unload
 next/views/models.js   Models: loaded instances, every model file with size and disk total, the
                        model panel (?model=<key>); #/models/<key> is still views/models/detail.js
+next/views/models/trash.js  the models trash (v65): the list's "Deleted models" row, #/models/deleted
+                       (GET /api/models/trash, ?item=<id> panel, Restore), the panel's Delete model
+                       (a dry run, the name typed, a comment); nothing removes a file for good
 next/views/settings.js Settings: the group menu, one group in view, one row per setting, the save bar
                        (dry run, the changes, a comment, then PATCH with If-Match)
 next/views/placement.js Placement preview: the Ask panel (profile, any zone or only these zones) and the
@@ -345,7 +347,7 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Tabs | `tabs([{id, label, count}], current, onPick)` | `div.tabs > button.tab(.on)`. Sub navigation inside one screen; keep the tab in the route (`navigate(id, rest, query, true)`). |
 | Banner | `banner(kind, content, action)` | `div.banner(.info|.warn|.err)`. A condition of the whole screen. A lost connection or a stale fleet feed is not a view's business: the shell shows it above every screen. |
 | Avatar | `avatar(model, 28 | 40 | 72)`, `named(model, node)` (`core/avatar.js`) | `span.av`: the owner's icon when `model.icon` is set, else a tile with the family's letters in the family's hue (`model.brand`), a prompt glyph for a command service. 40 px in the Models list, 28 px in a card header or a table of another screen, 72 px in a page header. Wherever a model is named prominently. |
-| Panel | `aside.drawer` in `div.drawer-back` (see `views/benchmarks.js`) | A panel from the right over the page, for the configuration of the thing the page is about. It is in the route (`?edit=1`), so Back closes it; Escape and a click beside it too. |
+| Panel | `sidePanel({label, title, sub, controls, body, onClose, kind, closesMenu})` (`next/core/panel.js`) | The side panel: beside the page at 1400 px and wider, over it below. Keep what it shows in the route, so Back closes it; Escape too. |
 | Snippet | `div.snip > div.snip-h + pre` | A block of text to copy (a command, a configuration), with a Copy button in its header. |
 | Empty state | `empty(title, text, action)` | `div.empty > b + p (+ button)`. Says what is not there, why, and what would make it appear. |
 | Loading state | `skeleton(lines)` | Pulsing lines; while the first REST answer is on its way. |
@@ -475,9 +477,14 @@ requests, ended, bench_run`) and `activity.hours[24]` / `activity.days[7]`
 The catalog is kept in memory on the server and on the page. Use
 `core/catalog.js`: `catalog.models`, `catalog.byKey`, `catalog.byProfile`,
 `onCatalog(fn)`, `needCatalog()`, `modelFor({profile, model_file})`. The live
-channel sends the whole catalog when it connects (topic `models`) and then
-only the entries that changed, so a view never fetches it and never polls;
-going back to Models draws at once. The instance cards are drawn from the
+channel sends the whole catalog when the page subscribes to topic `models` and
+then only the entries that changed, so a view never fetches it and never polls;
+going back to Models draws at once. The page subscribes to `models` only while
+the open screen called `needCatalog()` (Models, a model's page, Deleted models,
+Profiles, Placement): the server computes every profile's plan for that topic.
+A screen that only names models (Overview, Requests, Benchmarks) calls
+`needCatalog({live: false})`: one copy, no live updates. Leaving a screen lets
+the topic go (`releaseCatalog()`, called by the router hook in `next/app.js`). The instance cards are drawn from the
 WebSocket status (they need the live load figures). A model's icon: `PUT`
 (raw image body), `GET`, `DELETE /api/models/<key>/icon[?scope=family]`
 (`api.upload`, `api.del`).
@@ -621,33 +628,29 @@ before drawing a field.
   Run detail is phase-aware: a load-only benchmark shows load metrics; a
   conversation shows per turn prefill, decode, time to first token and reused
   prompt tokens.
-- A suite and a benchmark have their own page (`#/benchmarks/suite/<id>`,
-  `#/benchmarks/benchmark/<id>`): run history first, then the trend, then what
-  it contains or expects. Their configuration opens as a panel (`?edit=1`).
-  `GET /api/bench/benchmarks/<id>/results` -> `{results: [{run_id, suite_id,
-  suite_name, run_state, at, result, outcome, reason, profile, model_file,
-  nodes, duration_s, load_s, load_mb_s, memory_mib, decode_tps, prefill_tps,
-  ttft_ms, expect, regression}]}`, oldest first. Every suite and benchmark of
-  the aggregates has `recent[]` (`{run_id, at, result: pass | partial | fail |
-  cancelled | none, passed, failed, outcome}`, oldest first, at most 30): draw
-  a pass rate with `passDots(recent, pass_rate)`, never as a bare percentage.
-- External results (`views/benchmarks/external.js`): result sets measured
-  outside the runner. The overview lists `GET /api/bench/external` ->
-  `{external: [{id, title, description, note, created_at, updated_at, tables:
-  [{title, columns, row_count}], attachments: [{name, bytes}], models}]}`;
-  `#/benchmarks/external/<id>` shows `GET /api/bench/external/<id>` (`tables[]`
-  with `columns[] {key, label, unit, higher_is_better}` and `rows[]` keyed by
-  column, plus optional `model` and `profile`; `attachments[] {name, text}`).
-  Read-only; headers sort, long text cells fold.
-- Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
-  -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
-  pass_rate (a fraction, 0 to 1; null when nothing was judged), judged, outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
-  last, best, change_pct, threshold_pct, regression, points: [{run_id, at, value}]}},
-  turns: [...], last_run_id, last_at}], suites: [...], by_model: [...],
-  by_model_nodes: [{model_file, nodes, runs, steps, metrics}]}`.
-- The compact run indicator in the shell: `setShellSlot('run', node)` (`core/shell.js`).
-- The one-click run: `confirm({...})` first, saying that it will load and unload
-  models on the cluster, then `api.post('/api/bench/suites/<id>/run', {note})`.
+- The benchmark pages (25 Nov; boards Bench-Overview, Bench, Bench-Group,
+  Bench-Runs, Bench-Runs-Group, Bench-Report) are `next/views/benchmarks.js`
+  (the routes) and `next/views/bench/`: `common.js` (the lists, the words, the
+  greyed "not available yet" mark `notYet(text, WHY.<key>)` with
+  `data-notyet=<key>`), `list.js` (the groups and benchmarks, a group's
+  panel), `runs.js` (the runs table, a run's panel, a benchmark's report),
+  `live.js` (the menu's run card from `state.bench.run`), `results.js` (the
+  results per model from `GET /api/bench/results/models`: the Overview table
+  and the Runs page's views `?show=load-times|generation|first-token|memory`).
+  Routes:
+  `#/benchmarks` (Overview), `#/benchmarks/all[/<group>]`,
+  `#/benchmarks/runs[?kind&result&model&suite&page]`,
+  `#/benchmarks/runs/<number>[/<slug or step index>]`. The classic addresses
+  (`suite/<id>`, `benchmark/<id>`, `trends`, `external/...`, `edit/...`) open
+  the new pages. They read `GET /api/bench/groups`, `/benchmarks`, `/runs`
+  (offset, limit, total; kind, result, model, suite), `/runs/<ref>?requests=0`,
+  `/runs/<id>/report?step=N`, `/groups/<id>/expand`, and write only the pin
+  (`PUT`/`DELETE /api/bench/runs/<id>/pin` with a comment) and a group's
+  duplicate (`POST /api/bench/groups`). Model names come from the catalog's
+  REST copy (`needCatalog({live: false})`): these pages show no plans.
+- The classic benchmark pages (aggregates, external results, start-up
+  figures, editors, per-benchmark results, the run detail tabs) were dropped
+  on 25 Nov; their routes and data stay (`docs/releases.md` lists them).
 
 ## The dev harness
 

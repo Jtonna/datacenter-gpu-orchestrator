@@ -2,7 +2,6 @@
 package harness
 
 import (
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 )
 
 var (
@@ -67,16 +68,12 @@ func moduleRoot() string {
 	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
 
-// FreePort returns a TCP port that was free a moment ago. There is a small
-// window in which another process can take it.
+// FreePort returns a TCP port on 127.0.0.1 that a child process binds
+// later: outside the ephemeral range, so no port-0 listener or outgoing
+// connection of a parallel package takes it in between (testutil/ports).
 func FreePort(tb testing.TB) int {
 	tb.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		tb.Fatalf("FreePort: %v", err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return ports.Free(tb, "127.0.0.1")
 }
 
 // WaitForStatus polls url until it answers with the wanted status code, or

@@ -36,8 +36,11 @@
 //    "base": "http://127.0.0.1:8790",              // or: GET requests go to this server (cmd/devcluster), writes are refused
 //    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...],
 //               "absent": ["text that must not be drawn", ...], "none": ["css selector that must match nothing", ...],
+//               "order": ["text", "text drawn after it", ...],
 //               "has": ["css selector that must match something on the screen", ...],
 //               "pageHas" / "pageNone": the same over the whole page (shell, popups)
+//               "count": {"css selector": n} on the screen; "pageCount": the same over the whole page
+//               "text": {"css selector": "whole text"}: each element it matches reads exactly that
 //               "hash": "#/zones": the address after the clicks
 //               "ws": [{"type": "hello"|"requests"|..., "data": {...}}, ...]: live-channel
 //               messages delivered after the screen is drawn (hello also sets the
@@ -53,17 +56,29 @@
 //               "click": ["css selector clicked after the draw", {"type": "css selector", "value": "typed"}, ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
 //               "notOnPage": ["text nowhere on the page", ...],
+//               "notOnPageRe": ["regexp no text of the page may match", ...],
 //               "titles": ["text some title attribute on the page contains", ...],
 //               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
 //               "notFetched": ["regexp no request of the case may match", ...],
+//               "fetchedCount": {"regexp": n}: exactly n requests of the case match it,
 //               "noHeader": ["X-Actor", ...]: no request of the case carried it,
 //               "sentHeader": ["^X-Comment: why$"]: a header line "Name: value" matched each,
-//               "noHeaderLine": ["ptl_"]: no header line matched any}],
-//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error)
+//               "noHeaderLine": ["ptl_"]: no header line matched any,
+//               "subscribed": ["models"] / "notSubscribed": ["models"]: topics the
+//               live channel's last subscribe names, or not (with top-level "wsOpen")}],
+//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error;
+//     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line;
+//     {"$hang": true}: the request never answers, to draw a page while it waits;
+//     {"$after": "regexp", "$then": answer, "$before": answer}: $then once an earlier request line matched)
+//     "METHOD /path?query body" picks the answer, none answers 404: one route, answers by query or body)
+//    "wsOpen": true,                               // the live channel's socket opens (with "app")
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
 //    "tz": "America/Los_Angeles"}                 // the zone: uiExec sets TZ for node
 //
-// With "base", "status": "fetch" takes GET <base>/api/status.
+// With "base", "status": "fetch" takes GET <base>/api/status, and a request
+// with no answer in "fetch" goes to the base server: GETs, POST /api/plan and
+// writes with ?dry_run=1 (they only read); any other write is refused (405)
+// unless "passWrites": ["regexp on METHOD /path?query body", ...] names it.
 //
 // Each case sets the live status, mounts the route's view, lets fetches and
 // re-draws settle, and fails on any console.error, unhandled rejection, a
@@ -341,7 +356,19 @@ const ls = new Map();
 def('localStorage', { getItem: k => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)), removeItem: k => ls.delete(k), clear: () => ls.clear() });
 def('sessionStorage', globalThis.localStorage);
 def('navigator', { userAgent: 'ui-exec', language: 'en', clipboard: { writeText: async () => {} } });
-def('WebSocket', class { constructor() { this.readyState = 0; } send() {} close() {} addEventListener() {} });
+// The live channel never opens, unless the cases file says "wsOpen": true:
+// then a socket opens at once and every subscribe it sends is kept, for a
+// case's "subscribed" / "notSubscribed" (the topics of the last subscribe).
+const wsSubscribes = [];
+def('WebSocket', class {
+  static OPEN = 1;
+  constructor() {
+    this.readyState = 0;
+    if (spec.wsOpen) setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); }, 0);
+  }
+  send(b) { try { const m = JSON.parse(b); if (m.type === 'subscribe') wsSubscribes.push(m.topics || []); } catch { /* not JSON */ } }
+  close() {} addEventListener() {}
+});
 for (const k of ['ResizeObserver', 'IntersectionObserver', 'MutationObserver']) def(k, class { observe() {} unobserve() {} disconnect() {} });
 def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
 
@@ -351,15 +378,35 @@ const fetchedFull = []; // with the query and the body, for "fetchedQuery"
 const sentHeaders = new Set(); // every header name a request carried, for "noHeader"
 const sentHeaderLines = []; // "Name: value" of every header sent, for "sentHeader"
 const realFetch = globalThis.fetch;
+// requests to a real server (base) still in flight: settle() waits for them,
+// since a real answer (a write that syncs to disk, a slow race build) can
+// take longer than a few timer turns; realLog keeps each write's answer for
+// the failure report
+let inflight = 0;
+const realLog = [];
 let base = null;
+let passWrites = [];
 def('fetch', async (u, opts = {}) => {
   const full = new URL(String(u), location.href);
   const p = full.pathname;
   if (base && !Object.prototype.hasOwnProperty.call(fetchAnswers, p)) {
-    fetched.push((opts.method || 'GET') + ' ' + p);
-    // Writes are refused; POST /api/plan only reads (a dry run), so it goes through.
-    if ((opts.method || 'GET') !== 'GET' && p !== '/api/plan') return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
-    return realFetch(base + p + full.search, { method: opts.method || 'GET', headers: opts.headers, body: opts.body });
+    const m = opts.method || 'GET';
+    fetched.push(m + ' ' + p);
+    const line = m + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : '');
+    fetchedFull.push(line);
+    for (const k of Object.keys(opts.headers || {})) { sentHeaders.add(k); sentHeaderLines.push(k + ': ' + opts.headers[k]); }
+    // Writes are refused. What only reads goes through: POST /api/plan, a
+    // write with ?dry_run=1, and a write the spec lets through by name
+    // ("passWrites": regexps on the request line, for a test that owns its server).
+    const reads = p === '/api/plan' || full.searchParams.get('dry_run') === '1';
+    if (m !== 'GET' && !reads && !passWrites.some(re => new RegExp(re).test(line))) return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
+    inflight++;
+    try {
+      const r = await realFetch(base + p + full.search, { method: m, headers: opts.headers, body: opts.body });
+      const body = await r.text();
+      if (m !== 'GET') realLog.push(`${line} -> ${r.status} ${body.slice(0, 300)}`);
+      return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers });
+    } finally { inflight--; }
   }
   const method = opts.method || 'GET';
   fetched.push(method + ' ' + p);
@@ -368,6 +415,14 @@ def('fetch', async (u, opts = {}) => {
   // an answer by "METHOD /path" first, then by path; {"$status": 409, "$body": {...}} answers an error
   const has = k => Object.prototype.hasOwnProperty.call(fetchAnswers, k);
   let ans = has(method + ' ' + p) ? fetchAnswers[method + ' ' + p] : has(p) ? fetchAnswers[p] : undefined;
+  // {"$after": "regexp", "$then": answer, "$before": answer}: $then once an earlier request of the case matched (a page that reads again after a write)
+  if (ans && typeof ans === 'object' && typeof ans.$after === 'string') ans = fetchedFull.slice(0, -1).some(l => new RegExp(ans.$after).test(l)) ? ans.$then : ans.$before;
+  if (ans && typeof ans === 'object' && Array.isArray(ans.$match)) {
+    const line = method + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : '');
+    const hit = ans.$match.find(([re]) => new RegExp(re).test(line));
+    ans = hit ? hit[1] : undefined;
+  }
+  if (ans && typeof ans === 'object' && ans.$hang) return new Promise(() => {}); // still waiting when the case is read
   let status = ans !== undefined ? 200 : 404;
   if (ans && typeof ans === 'object' && ans.$status) { status = ans.$status; ans = ans.$body; }
   const ok = status >= 200 && status < 300;
@@ -449,6 +504,7 @@ const spec = live
       cases: LIVE_SCREENS[which].map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
   : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
+passWrites = spec.passWrites || [];
 // "now": "2026-11-24T06:30:00Z" fixes the clock there (it runs on from it):
 // new Date(), Date.now(). The zone is the process's (TZ, set by the caller).
 if (spec.now) {
@@ -485,7 +541,14 @@ function isolatedCopy(src) {
 }
 const ui = uiDir === spec.ui && live && !flag('--local-ui') ? path.resolve(spec.ui) : isolatedCopy(path.resolve(spec.ui));
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
-const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); };
+const settle = async () => {
+  const until = Date.now() + 20000;
+  for (;;) {
+    for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0));
+    if (!inflight || Date.now() > until) return;
+    while (inflight && Date.now() <= until) await new Promise(r => setTimeout(r, 5));
+  }
+};
 
 let router, store;
 try { router = await mod('core/router.js'); store = await mod('core/store.js'); } catch (e) {
@@ -530,7 +593,7 @@ const go = async hash => { setHashQuietly(hash); globalThis.dispatchEvent(new Fa
 
 let failed = 0;
 for (const c of spec.cases) {
-  errors.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear(); sentHeaderLines.length = 0;
+  errors.length = 0; realLog.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear(); sentHeaderLines.length = 0;
   fetchAnswers = Object.assign({}, spec.fetch || {}, c.fetch || {});
   const route = router.parse(c.route);
   if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
@@ -552,6 +615,14 @@ for (const c of spec.cases) {
     for (const sel of c.click || []) {
       // {"type": "css selector", "value": "text"}: the text typed into that field (an input event)
       // {"context": "css selector"}: a right click on it (a contextmenu event)
+      // {"dbl": "css selector"}: a double click on it (a dblclick event)
+      if (sel && typeof sel === 'object' && sel.dbl) {
+        const el = document.body.querySelector(sel.dbl);
+        if (!el) { errors.push('nothing to double-click: ' + sel.dbl); break; }
+        el.dispatchEvent(new FakeEvent('dblclick'));
+        await settle();
+        continue;
+      }
       if (sel && typeof sel === 'object' && sel.context) {
         const el = document.body.querySelector(sel.context);
         if (!el) { errors.push('nothing to right-click: ' + sel.context); break; }
@@ -590,13 +661,54 @@ for (const c of spec.cases) {
     for (let i = 0; i < (c.back || 0); i++) { globalThis.history.back(); await settle(); }
     // widthAfter: the window resized after all that
     if (c.widthAfter) { setWidth(c.widthAfter); await settle(); }
+    // against a real server (base): the case is judged once its condition
+    // holds, not after a fixed number of turns: every expected text on the
+    // screen and on the page, polled (with the requests in flight answered,
+    // settle) for up to 30 s, so a loaded machine cannot fail it early
+    if (base && ((c.expect || []).length || (c.page || []).length)) {
+      const until = Date.now() + 30000;
+      const ready = () => (c.expect || []).every(w => outlet.textContent.includes(w)) && (c.page || []).every(w => document.body.textContent.includes(w));
+      while (!ready() && Date.now() < until) { await new Promise(r => setTimeout(r, 50)); await settle(); }
+    }
   }
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
+  // what the page showed instead: the open dialog, the banners, the writes' answers
+  if ((c.expect || []).some(w => !text.includes(w)) || (c.page || []).some(w => !document.body.textContent.includes(w))) {
+    const dlg = document.body.querySelector('div.dlg');
+    if (dlg) errors.push(`  the dialog shows [${dlg.getAttribute('data-dlg') || ''} ${dlg.getAttribute('data-state') || ''}]: ` + JSON.stringify(dlg.textContent.slice(0, 600)));
+    for (const b of document.body.querySelectorAll('.banner')) errors.push('  a banner says: ' + JSON.stringify(b.textContent.slice(0, 300)));
+    for (const l of realLog.slice(-6)) errors.push('  a write answered: ' + l);
+    if (inflight) errors.push(`  ${inflight} request(s) to the server still unanswered after 20 s`);
+  }
+  // order: texts that must appear in this order (a sorted list)
+  { let at = -1; for (const want of c.order || []) { const i = text.indexOf(want, at + 1); if (i < 0) { errors.push('out of order or missing: ' + JSON.stringify(want)); break; } at = i; } }
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
   for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);
+  // count: {selector: n}: exactly n elements in the view match
+  for (const [sel, n] of Object.entries(c.count || {})) { const k = outlet.querySelectorAll(sel).length; if (k !== n) errors.push(`${k} elements match ${sel}, want ${n}`); }
+  // text: {"css selector": "the whole text of each element it matches"}
+  for (const [sel, want] of Object.entries(c.text || {})) {
+    const els = outlet.querySelectorAll(sel);
+    if (!els.length) errors.push(`no element matches: ${sel}`);
+    for (const e of els) { const got = String(e.textContent).replace(/\s+/g, ' ').trim(); if (got !== want) errors.push(`${sel} reads "${got}", want "${want}"`); }
+  }
+  for (const [sel, n] of Object.entries(c.pageCount || {})) { const k = document.body.querySelectorAll(sel).length; if (k !== n) errors.push(`${k} elements on the page match ${sel}, want ${n}`); }
+  // evenX: selectors of chart points (cx) that must be spread evenly within
+  // each chart (their parent svg): the widest gap between neighbouring x
+  // values at most twice the narrowest
+  for (const sel of c.evenX || []) {
+    const charts = new Map();
+    for (const e of outlet.querySelectorAll(sel)) { const k = e.parentNode; if (!charts.has(k)) charts.set(k, new Set()); charts.get(k).add(Number(e.getAttribute('cx'))); }
+    if (!charts.size) errors.push(`evenX: no point matches ${sel}`);
+    for (const set of charts.values()) {
+      const xs = [...set].sort((x, y) => x - y), gaps = xs.slice(1).map((x, i) => x - xs[i]);
+      if (xs.length < 3) errors.push(`evenX: a chart with ${xs.length} points (${sel})`);
+      else if (Math.max(...gaps) > 2 * Math.min(...gaps)) errors.push(`evenX: ${sel} gaps from ${Math.min(...gaps).toFixed(1)} to ${Math.max(...gaps).toFixed(1)}`);
+    }
+  }
   if (c.hash && location.hash !== c.hash) errors.push('the address is ' + location.hash + ', want ' + c.hash);
   // titles: texts some element's title attribute on the page contains
   if (c.titles) {
@@ -609,8 +721,16 @@ for (const c of spec.cases) {
   for (const re of c.fetchedQuery || []) if (!fetchedFull.some(f => new RegExp(re).test(f))) errors.push('no request matches /' + re + '/ (requests: ' + JSON.stringify([...new Set(fetchedFull)]) + ')');
   // notFetched: regular expressions no request may match (a write that must not be sent)
   for (const re of c.notFetched || []) { const hit = fetchedFull.find(f => new RegExp(re).test(f)); if (hit) errors.push('a request that must not be sent: ' + hit); }
+  // fetchedCount: how many requests match (a read sent once, not once per draw)
+  for (const [re, n] of Object.entries(c.fetchedCount || {})) { const hits = fetchedFull.filter(f => new RegExp(re).test(f)); if (hits.length !== n) errors.push(hits.length + ' requests match /' + re + '/, want ' + n + ': ' + JSON.stringify(hits)); }
   for (const hd of c.noHeader || []) if (sentHeaders.has(hd)) errors.push('a request carried the header ' + hd);
   for (const re of c.sentHeader || []) if (!sentHeaderLines.some(l => new RegExp(re).test(l))) errors.push('no header matches /' + re + '/ (headers: ' + JSON.stringify([...new Set(sentHeaderLines)]) + ')');
+  // subscribed / notSubscribed: topics the live channel's last subscribe names, or not
+  {
+    const last = wsSubscribes.length ? wsSubscribes[wsSubscribes.length - 1] : [];
+    for (const t of c.subscribed || []) if (!last.includes(t)) errors.push('the live channel is not subscribed to ' + t + ' (last subscribe: ' + JSON.stringify(last) + ')');
+    for (const t of c.notSubscribed || []) if (last.includes(t)) errors.push('the live channel is subscribed to ' + t + ' (last subscribe: ' + JSON.stringify(last) + ')');
+  }
   for (const re of c.noHeaderLine || []) { const hit = sentHeaderLines.find(l => new RegExp(re).test(l)); if (hit) errors.push('a header that must not be sent: ' + hit); }
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);
@@ -620,6 +740,7 @@ for (const c of spec.cases) {
   const pageText = document.body.textContent;
   for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
   for (const bad of c.notOnPage || []) if (pageText.includes(bad)) errors.push('on the page, but must not be: ' + JSON.stringify(bad));
+  for (const re of c.notOnPageRe || []) { const m = pageText.match(new RegExp(re)); if (m) errors.push('on the page, matches ' + re + ': ' + JSON.stringify(m[0])); }
   // links: [{text, path}]: somewhere on the page (shell included) a link with
   // that text whose href, resolved against the page's address, has that path.
   for (const l of c.links || []) {

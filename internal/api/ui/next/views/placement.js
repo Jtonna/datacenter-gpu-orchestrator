@@ -19,7 +19,7 @@ import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, badge, banner, empty, skeleton, searchField, segmented, fileShort } from '../core/ui.js';
+import { liveView, pageHead, badge, banner, empty, skeleton, searchField, segmented, fileShort, profileLabel, profileStage } from '../core/ui.js';
 import { num, gb, mib, ctx, plural } from '../core/format.js';
 import { nodeName, viewNodes, plainReason, plainBasis } from '../core/status.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
@@ -100,13 +100,16 @@ registerView({
     function picker() {
       const all = profiles || [];
       const q = search().trim().toLowerCase();
-      const nGen = all.filter(p => p.generated).length;
-      const hit = p => !q || p.id.toLowerCase().includes(q) || String(p.model || '').toLowerCase().includes(q) || (p.aliases || []).some(a => a.toLowerCase().includes(q)) || (p.description || '').toLowerCase().includes(q);
-      // generated profiles stay out until asked for or searched (README rule 9)
-      const shown = all.filter(p => hit(p) && (q || showGen() || !p.generated || p.id === picked()));
+      // production first, the test profiles under their shown names (profiles plan, section 9)
+      const isTest = p => profileStage(p) === 'test';
+      const nGen = all.filter(isTest).length;
+      const hit = p => !q || p.id.toLowerCase().includes(q) || profileLabel(p).toLowerCase().includes(q) || String(p.model || '').toLowerCase().includes(q) || (p.aliases || []).some(a => a.toLowerCase().includes(q)) || (p.description || '').toLowerCase().includes(q);
+      // test profiles stay out until asked for or searched (README rule 9), and come after the production ones
+      const shown = all.filter(p => hit(p) && (q || showGen() || !isTest(p) || p.id === picked()))
+        .sort((a, b) => Number(isTest(a)) - Number(isTest(b)));
       const list = shown.slice(0, LIST_MAX);
       return h('div.plc-sec', { key: 'pick' },
-        h('div.plc-lab', h('label', { for: 'plc-search' }, 'Profile'), profiles ? h('span.mut', plural(all.length - nGen, 'profile') + (nGen ? ' · ' + num(nGen) + ' generated' : '')) : null),
+        h('div.plc-lab', h('label', { for: 'plc-search' }, 'Profile'), profiles ? h('span.mut', plural(all.length - nGen, 'profile') + (nGen ? ' · ' + num(nGen) + ' test' : '')) : null),
         searchField(search(), v => go(route.rest, { q: v || null }), 'Search profiles and models', 'plc-search', { size: 'lg', width: 9999 }),
         error ? h('div.err-t', 'The profiles could not be read: ' + error)
           : !profiles ? skeleton(4)
@@ -117,13 +120,13 @@ registerView({
                 const on = p.id === picked();
                 return h('button', { class: 'plc-opt' + (on ? ' on' : ''), type: 'button', role: 'option', 'aria-selected': on ? 'true' : 'false', key: 'o-' + p.id, 'data-profile': p.id,
                   onclick: () => go([p.id], {}) },
-                  h('span.plc-oname', h('span.mono', { title: p.id }, p.id), p.generated ? h('span.plc-gen', 'generated') : null),
+                  h('span.plc-oname', h('span', { title: p.id, 'data-shown': '' }, profileLabel(p)), isTest(p) ? h('span.plc-gen', 'test') : null),
                   h('span.plc-osub', [shortModel(p.model), p.ctx ? ctx(p.ctx) + ' context' : null].filter(Boolean).join(' · ')),
                   h('span', { class: 'plc-dot k-' + kind, title: label, 'aria-label': label }));
               }),
               shown.length > list.length ? h('div.plc-none', { key: 'more' }, num(shown.length - list.length) + ' more: search to narrow the list.') : null),
         profiles && nGen && !q ? h('label.check.plc-gentoggle', h('input.cb', { type: 'checkbox', checked: showGen(), 'data-gen': '', onchange() { go(route.rest, { gen: this.checked ? '1' : null }); } }),
-          'Show generated (' + num(nGen) + ')') : null);
+          'Show test profiles too (' + num(nGen) + ')') : null);
     }
 
     function zonesPart(st) {
@@ -166,7 +169,7 @@ registerView({
         h('div.plc-rhead',
           h('div.grow',
             h('div.lbl', chosen().length ? 'Result on ' + plural(chosen().length, 'chosen zone') : 'Result'),
-            h('div.plc-rtitle', h('h2.mono', plan.model), badge(label, kind), plan.tight_fit ? badge('Tight fit', 'load', 'It fits only without its margin on at least one zone') : null,
+            h('div.plc-rtitle', h('h2', { title: plan.model, 'data-shown': '' }, p ? profileLabel(p) : plan.model), p && profileLabel(p) !== plan.model ? h('span.mono.mut', plan.model) : null, badge(label, kind), plan.tight_fit ? badge('Tight fit', 'load', 'It fits only without its margin on at least one zone') : null,
               plan.alias ? badge('Asked by an alias', 'n') : null),
             h('div.mut', [p ? shortModel(p.model) : null, p && p.ctx ? ctx(p.ctx) + ' context' : null, p && p.parallel > 1 ? p.parallel + ' slots' : null].filter(Boolean).join(' · '))),
           h('a.btn.sm', { href: href('profiles', [], { profile: plan.model }) }, 'Open the profile')),
@@ -239,5 +242,12 @@ function hostLine(plan, name) {
   const text = plan.host === 'node'
     ? ['llama-server would run on ', h('span.mono', name(plan.host_node)), plan.host_overhead_mib ? ', which also holds ' + gb(plan.host_overhead_mib) + ' for the host process' : '', '.']
     : ["llama-server would run on the scheduler's machine; the zones hold the model."];
-  return h('div.plc-block', h('h3', 'Host'), h('p', text), plan.host_problem ? h('p.err-t', 'It cannot host now: ' + plainReason(plan.host_problem)) : null);
+  const hm = plan.host_memory;
+  const conv = hm && (hm.size_unknown || hm.checkpoints_mib + hm.prompt_cache_mib > 0)
+    ? h('p', { 'data-hostmem': '' }, 'Conversation memory of the host process: ', hm.size_unknown ? 'at least ' : 'up to ', gb(hm.checkpoints_mib + hm.prompt_cache_mib),
+      hm.size_unknown ? ` (prompt cache ${gb(hm.prompt_cache_mib)}; restore points NOT included: size not yet known, read at the first load), `
+        : ` (restore points ${gb(hm.checkpoints_mib)}${hm.from_log ? `, size as the server logged it at a load of ${hm.logged_file} at ctx ${hm.logged_ctx}` : ''}, prompt cache ${gb(hm.prompt_cache_mib)}), `,
+      hm.on_node ? (hm.counted ? 'counted in what it needs.' : 'not yet counted.') : 'not placed.')
+    : null;
+  return h('div.plc-block', h('h3', 'Host'), h('p', text), conv, plan.host_problem ? h('p.err-t', 'It cannot host now: ' + plainReason(plan.host_problem)) : null);
 }

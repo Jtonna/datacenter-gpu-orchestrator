@@ -190,7 +190,14 @@ func (c *schedCore) hostReading(in *inst, avg bool) (mib, logHost int, ok bool) 
 	if !ok {
 		return 0, 0, false
 	}
-	return base - free - dev, int(in.child.Load().HostMiB() + 0.999), true
+	ls := in.child.Load()
+	mib = base - free - dev
+	if c.cfg.Defaults.CountHostMemory {
+		// the host-memory term counts the checkpoints (hostmem.go): the
+		// reading leaves out those held now, so they are not counted twice
+		mib -= int(ls.HostMem.HeldMiB())
+	}
+	return mib, int(ls.HostMiB() + 0.999), true
 }
 
 // hostSettleAt is when in's host overhead is read: one full average window
@@ -210,6 +217,13 @@ func (c *schedCore) measureHostOverheads() {
 	c.correctPending()
 	for _, in := range c.insts {
 		if in.placement.Host == "" || in.child == nil || in.readyAt.IsZero() || (in.state != stReady && in.state != stDraining) {
+			continue
+		}
+		if in.baseUnsettled[in.placement.Host] {
+			if !in.hostMeasured {
+				in.hostMeasured = true
+				c.log.Debug("no host overhead reading: the base was taken just after a release on the host", "profile", in.prof.Name, "node", c.nodeName(in.placement.Host))
+			}
 			continue
 		}
 		if mib, _, ok := c.hostReading(in, false); ok {

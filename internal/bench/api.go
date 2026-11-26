@@ -83,7 +83,32 @@ type PlanInfo struct {
 	// (node ids in Reload[].ID, no names); empty from an older scheduler.
 	LoadMode string
 	Reload   []NodeReload
-	Raw      json.RawMessage
+	// Ctx and Parallel are the profile's context and slots (0: the plan does
+	// not say). SharedWith is shape_shared_with: the other profiles with the
+	// same shape (model, ctx, parallel and options), nil when the scheduler
+	// does not say (an older build), empty when none.
+	Ctx        int
+	Parallel   int
+	SharedWith *[]SharedProfile
+	// CtxNote is the plan's ctx_note: the plan is for the model's trained
+	// context, or the running server says another one ("" when none).
+	CtxNote string
+	// Generated is whether the profile itself was generated (made from a
+	// recipe's inputs or by a benchmark); nil when the plan does not say.
+	Generated *bool
+	// Growth is the plan's growth_history: the highest stored growth per token
+	// for the shape and how many readings count (nil: the scheduler does not
+	// say). ReserveKiB is its fill_reserve_kib_per_token (nil: not said).
+	Growth     *GrowthHistory
+	ReserveKiB *int
+	Raw        json.RawMessage
+}
+
+// SharedProfile is a profile of shape_shared_with; Generated is set for a
+// profile made from a recipe's inputs or by a benchmark.
+type SharedProfile struct {
+	ID        string `json:"id"`
+	Generated bool   `json:"generated"`
 }
 
 // LoadAnswer is the answer of /api/load.
@@ -130,6 +155,14 @@ type InstanceInfo struct {
 	Load           *LoadInfo
 	Nodes          []InstanceNodeInfo
 	LoadMode       string // file_read, pushed, local; empty from an older scheduler
+	// Ctx is the context per slot the instance was planned with, CtxServed
+	// the server's own figure (/props; nil until read or when it could not
+	// be) and CtxNote what the scheduler says about it ("runs at 2,048,
+	// profile says 8,192", "context not confirmed: ..."). All zero from an
+	// older scheduler.
+	Ctx       int
+	CtxServed *int
+	CtxNote   string
 }
 
 // WorkerInfo is a node of the scheduler's view with what it reports about its rpc-server.
@@ -147,6 +180,14 @@ type WorkerInfo struct {
 	AvailMiB  *int64
 	AvailKind string
 	AvailNote string
+	// SampleAt is when the figure was taken: the status's time less the
+	// agent's last_seen_ago_s (its last report). Zero when not known (the
+	// scheduler's own machine, or a status without the age).
+	SampleAt time.Time
+	// SampleAgeMS is how old the figure already was when the heartbeat was
+	// built: a GPU figure's stats source age_ms; 0 for the system figure (read
+	// while the heartbeat is built).
+	SampleAgeMS int64
 }
 
 // RecentLoad is an entry of recent_loads.
@@ -240,6 +281,9 @@ func BuildChatRequest(profile string, r benchspec.Request) ChatRequest {
 	if r.Streams() {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
+	if r.NoThinking { // the request's own template setting, documented (tools/server/README.md); only the command-line route is deprecated
+		body["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+	}
 	b, _ := json.Marshal(body)
 	return ChatRequest{Model: profile, Body: b, Stream: r.Streams()}
 }
@@ -329,13 +373,20 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	}
 	var p struct {
 		Action    string `json:"action"`
+		CtxNote   string `json:"ctx_note"`
 		Reason    string `json:"reason"`
 		Nodes     []any  `json:"nodes"`
 		Placement []struct {
 			ID string `json:"id"`
 		} `json:"placement"`
-		LoadMode string `json:"load_mode"`
-		Reload   []struct {
+		Ctx        int              `json:"ctx"`
+		Parallel   int              `json:"parallel"`
+		SharedWith *[]SharedProfile `json:"shape_shared_with"`
+		Generated  *bool            `json:"generated"`
+		Growth     *GrowthHistory   `json:"growth_history"`
+		ReserveKiB *int             `json:"fill_reserve_kib_per_token"`
+		LoadMode   string           `json:"load_mode"`
+		Reload     []struct {
 			ID        string   `json:"id"`
 			Verdict   string   `json:"verdict"`
 			Shared    bool     `json:"shared"`
@@ -354,7 +405,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode}
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, CtxNote: p.CtxNote, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith, Generated: p.Generated, Growth: p.Growth, ReserveKiB: p.ReserveKiB}
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
 			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
@@ -433,6 +484,9 @@ type statusWire struct {
 		ModelFile      string  `json:"model_file"`
 		DeviceTotalMiB float64 `json:"device_total_mib"`
 		LoadMode       string  `json:"load_mode"`
+		Ctx            int     `json:"ctx"`
+		CtxServed      *int    `json:"ctx_served"`
+		CtxNote        string  `json:"ctx_note"`
 		Load           *struct {
 			SessionID  string   `json:"session_id"`
 			ElapsedS   float64  `json:"elapsed_s"`
@@ -534,7 +588,7 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 	}
 	for i, in := range w.Instances {
 		ii := InstanceInfo{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Waiters: in.Waiters, LogFile: in.LogFile, DeviceTotalMiB: in.DeviceTotalMiB,
-			Cmd: in.Cmd, ModelFile: in.ModelFile, LoadMode: in.LoadMode}
+			Cmd: in.Cmd, ModelFile: in.ModelFile, LoadMode: in.LoadMode, Ctx: in.Ctx, CtxServed: in.CtxServed, CtxNote: in.CtxNote}
 		if in.Load != nil {
 			li := &LoadInfo{SessionID: in.Load.SessionID, ElapsedS: in.Load.ElapsedS, BytesTotal: in.Load.BytesTotal, BytesSent: in.Load.BytesSent, Progress: in.Load.Progress, EtaS: in.Load.EtaS}
 			if i < len(envelope.Instances) {
@@ -573,8 +627,11 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 			}
 		}
 		if n.Agent != nil {
-			if v, kind, note := agentAvail(n.Agent); v != nil {
-				wi.AvailMiB, wi.AvailKind, wi.AvailNote = v, kind, note
+			if v, kind, note, age := agentAvail(n.Agent); v != nil {
+				wi.AvailMiB, wi.AvailKind, wi.AvailNote, wi.SampleAgeMS = v, kind, note, age
+				if ago := n.Agent.LastSeenAgoS; ago != nil && !out.Time.IsZero() {
+					wi.SampleAt = out.Time.Add(-time.Duration(*ago * float64(time.Second)))
+				}
 			}
 		}
 		out.Workers = append(out.Workers, wi)
@@ -803,3 +860,12 @@ func (h *HTTPAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+
+// GrowthHistory is a plan's growth_history: the highest stored growth per
+// token (KiB) of the plan's shape, the readings that count and the capped
+// ones left out. Readings 0: the shape has no history.
+type GrowthHistory struct {
+	KiBPerToken   float64 `json:"kib_per_token"`
+	Readings      int     `json:"readings"`
+	CappedSkipped int     `json:"capped_skipped"`
+}

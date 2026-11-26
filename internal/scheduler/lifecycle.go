@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -28,7 +29,7 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	pl.Host = hostOf(p, pl) // hostnode.go: "" unless the profile has host: node
 	in := &inst{iid: c.next(), prof: p, state: stStarting, phase: phPreflight, placement: pl,
 		created: c.now, waiters: waiters, entryCreated: e.created, entrySeq: e.seq, entryClock: e.clock,
-		gone: make(chan struct{})}
+		gone: make(chan struct{}), cutBy: new(atomic.Pointer[Error])}
 	for _, w := range waiters {
 		if w.benchRun != "" {
 			in.benchRun = w.benchRun
@@ -242,6 +243,7 @@ func (c *schedCore) launch(in *inst) {
 		health = p.CheckEndpoint
 	}
 	in.phase = phLaunching
+	c.noteDroppedCkptFlag(in)
 	if pl.Host != "" {
 		// hostnode.go: the host process runs on the node, as a host launch.
 		spec := c.hostSpec(in)

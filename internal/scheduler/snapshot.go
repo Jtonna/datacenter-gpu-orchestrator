@@ -106,7 +106,10 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf, Drain: in.drain, PinnedNodes: c.pins[in.prof],
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
+		LaunchNote: in.launchNote,
 	}
+	instCtxStatus(&s, in)                              // realctx.go
+	s.Production, s.Scope, _ = c.scopeOf(in.prof.Name) // scoped.go
 	if in.state == stStarting {
 		s.Phase = in.phase.String()
 		if in.phase == phLoading {
@@ -170,7 +173,8 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 }
 
 func (c *schedCore) statusDoc() Status {
-	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds(), ConfigRevision: c.cfg.Revision, Configured: c.cfg.Configured}
+	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds(), ConfigRevision: c.cfg.Revision, Configured: c.cfg.Configured,
+		ServerHostMemory: c.serverHostMemory(), NodeHostMemory: c.nodeHostMemory()}
 	for _, in := range c.sortedInsts() {
 		st.Instances = append(st.Instances, c.instStatus(in))
 	}
@@ -269,10 +273,27 @@ func (c *schedCore) placedStatus(pl core.Placement) []PlacedNodeStatus {
 	return out
 }
 
+// planNeed fills r's memory need from p's need as every fit decision sees it
+// (written in the profile, learned, or estimated). A plan that rejects or
+// backs off before placing carries it too: a known need is shown whatever
+// the plan says (the reviewer, 26 Nov: the "program on this machine" rows
+// showed a dash while the local machine was excluded). An unknown need
+// leaves r as it is and returns the error.
+func (c *schedCore) planNeed(r *PlanReport, p *core.Profile) (placer.Request, NeedInfo, error) {
+	req, info, err := c.request(p)
+	if err != nil {
+		return req, info, err
+	}
+	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
+	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
+	r.NeedBasis += c.writtenNeedDropped(p) // scoped.go
+	return req, info, nil
+}
+
 // dryPlan is POST /api/plan: what a request for profile would meet now.
 // It changes nothing (the need provider's result may be cached).
 func (c *schedCore) dryPlan(profile string) PlanReport {
-	return c.dryPlanOf(profile, c.cfg.Profiles[profile])
+	return c.dryPlanOf(profile, c.profile(profile))
 }
 
 // dryPlanOf is dryPlan for p, which may be a one-off pinned copy (pin.go).
@@ -294,12 +315,18 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 					r.Reason += "; " + text
 				}
 			}
-			c.planHost(&r, p, placed)                     // hostnode.go
+			c.planHost(&r, p, placed) // hostnode.go
 		}
 	}()
 	if p == nil {
 		r.Action, r.Reason = PlanReject, string(ReasonUnknownModel)
 		return r
+	}
+	if p.Kind == core.KindLlama {
+		r.Ctx, r.CtxNote = p.Ctx, ctxNote(p) // realctx.go
+		if in := c.insts[p.Name]; in != nil && ctxDiffers(in.servedCtx, in.prof.Ctx) {
+			r.CtxNote = servedNote(in.prof, in.servedCtx) // the running instance's server says otherwise
+		}
 	}
 	if c.shutdown {
 		r.Action, r.Reason = PlanReject, string(ReasonShuttingDown)
@@ -307,27 +334,29 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	if b, on := c.backoffActive(profile); on {
 		r.Action, r.Reason = PlanBackoff, fmt.Sprintf("backed off until %s", b.until.Format("15:04:05"))
+		c.planNeed(&r, p)
 		return r
 	}
 	if why, entry, bad := c.forcedExclusion(p); bad && c.insts[profile] == nil {
 		r.Action, r.Reason, r.ExcludedBy = PlanReject, why, entry
+		c.planNeed(&r, p)
 		return r
 	}
 	if fe := c.forcedPausedErr(p); fe != nil && c.insts[profile] == nil {
 		r.Action, r.Reason = PlanReject, fe.Message
+		c.planNeed(&r, p)
 		return r
 	}
 	if fe := c.forcedGoneErr(p); fe != nil && c.insts[profile] == nil {
 		r.Action, r.Reason = PlanReject, fe.Message
+		c.planNeed(&r, p)
 		return r
 	}
-	req, info, err := c.request(p)
+	req, _, err := c.planNeed(&r, p)
 	if err != nil {
 		r.Action, r.Reason = PlanReject, "memory need unknown: "+err.Error()
 		return r
 	}
-	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
-	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
 	if c.insts[profile] == nil {
 		if fe := c.forcedNeverFits(p); fe != nil {
 			r.Action, r.Reason = PlanReject, fe.Message
@@ -376,7 +405,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, g, err := c.evictPlan(p, req, ev); err == nil { // tight.go, as plan()
-			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) { // as plan() (AB1)
+			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict(p) && c.anyJustReleased(res.Placement) { // as plan() (AB1)
 				r.Action, r.Reason = PlanQueue, forcedFitWaitText(res.Placement, c)
 				return r
 			}
@@ -425,7 +454,7 @@ func (c *schedCore) applyForcedFit(r *PlanReport, p *core.Profile, pl core.Place
 		return
 	}
 	if ff.mode == config.ForcedFitReject {
-		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" (defaults.forced_fit_check is reject)"
+		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" ("+ff.rule+")"
 		return
 	}
 	r.Warning = ff.message(p.Name) + " (defaults.forced_fit_check is warn; it would start anyway)"

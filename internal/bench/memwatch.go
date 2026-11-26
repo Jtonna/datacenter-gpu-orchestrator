@@ -18,6 +18,9 @@ const DefaultMemSample = 500 * time.Millisecond
 // phase). Only the nodes that took part are kept when the step finishes.
 type memWatch struct {
 	loading atomic.Bool // the step is loading its model
+	// hook, when set, sees every status the watch observes (a context_fill
+	// turn's stop line).
+	hook atomic.Pointer[func(*StatusInfo)]
 
 	mu   sync.Mutex
 	low  map[string]*memLowAcc // by node id
@@ -37,6 +40,9 @@ func newMemWatch() *memWatch { return &memWatch{low: map[string]*memLowAcc{}} }
 func (w *memWatch) observe(s *StatusInfo) {
 	if w == nil || s == nil {
 		return
+	}
+	if h := w.hook.Load(); h != nil {
+		(*h)(s)
 	}
 	loading := w.loading.Load()
 	w.mu.Lock()

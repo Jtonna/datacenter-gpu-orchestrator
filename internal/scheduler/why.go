@@ -48,7 +48,9 @@ func (c *schedCore) waitWhy(p *core.Profile) (Reason, string) {
 		case placer.ForcedUnavailable:
 			reason, text = c.forcedWhy(p, np)
 		case placer.NoFit:
-			if r, t, ok := c.filteredWhy(p, req); ok {
+			if t, ok := c.unpausingWhy(p, req); ok {
+				reason, text = ReasonClusterBusy, t
+			} else if r, t, ok := c.filteredWhy(p, req); ok {
 				reason, text = r, t
 			}
 		}
@@ -80,7 +82,7 @@ func (c *schedCore) forcedWhy(p *core.Profile, np *placer.NoPlacement) (Reason, 
 		case c.pausedNode(n):
 			parts = append(parts, fmt.Sprintf("forced node %s is paused", name))
 		case n.Paused && n.UnpausePending:
-			parts = append(parts, fmt.Sprintf("forced node %s was unpaused; its agent has not been told yet (next heartbeat)", name))
+			parts = append(parts, fmt.Sprintf("forced node %s: %s", name, unpausePendingText))
 		case c.eligible(id):
 			busy = append(busy, name) // held, claimed or settling: a wait, not an absence
 		default:
@@ -97,6 +99,45 @@ func (c *schedCore) forcedWhy(p *core.Profile, np *placer.NoPlacement) (Reason, 
 		parts = append(parts, "forced nodes unavailable: "+strings.Join(other, ", "))
 	}
 	return reason, strings.Join(parts, "; ")
+}
+
+// unpausePendingText is said of a node unpaused whose agent has not been
+// told yet: the pool tells it with the next heartbeat answer (every 2 s,
+// pool.HeartbeatEvery; agent contract 7.2), and the node takes load then.
+const unpausePendingText = "unpause pending: it was unpaused and its agent is told with its next heartbeat, so the load starts within about 2 s"
+
+// unpausingWhy answers NoFit when the profile would fit if the nodes that
+// were unpaused, and whose agents have not been told yet, were free: it
+// names them and says the load starts within about 2 s. Only such nodes are
+// added; every other reason a node takes no load still counts.
+func (c *schedCore) unpausingWhy(p *core.Profile, req placer.Request) (string, bool) {
+	cands := c.freeCandidates(p)
+	var names []string
+	for _, id := range c.sortedNodeIDs() {
+		n, ok := c.node(id)
+		if !ok || !n.Paused || !n.UnpausePending || !c.eligible(id) || c.agentHeld(id) || (localOnly(p) && !n.Local) || c.autoOff(p, n) {
+			continue
+		}
+		if u := c.unplaced[id]; u != "" && u != UnplacedPaused {
+			continue
+		}
+		if ns := c.nodes[id]; ns != nil && (ns.holder != "" || ns.claim != "" || ns.settle != setNone) {
+			continue
+		}
+		cands = append(cands, placer.FromNode(n, c.liveBudget(id, n)))
+		names = append(names, nodeLabel(id, n))
+	}
+	if len(names) == 0 {
+		return "", false
+	}
+	if _, err := placer.Place(req, cands); err != nil {
+		return "", false
+	}
+	word := "node"
+	if len(names) > 1 {
+		word = "nodes"
+	}
+	return fmt.Sprintf("%s %s: %s", word, strings.Join(names, ", "), unpausePendingText), true
 }
 
 // filteredWhy answers NoFit: would the need fit if quarantined or

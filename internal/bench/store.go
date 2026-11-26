@@ -317,6 +317,19 @@ type Store struct {
 	closed bool
 	wg     sync.WaitGroup
 	late   atomic.Int64 // writes refused because the store was closed (LateWrites)
+	// benchOff: the bench migrations are ahead of this build (OpenShared).
+	// The database serves the other ledgers; the bench tables are not
+	// migrated, backfilled or written, and the benchmark feature stays off.
+	benchOff *NewerSchemaError
+}
+
+// BenchOff is the reason the bench tables cannot be used by this build (a
+// newer version migrated them), else nil. Only OpenShared opens such a store.
+func (s *Store) BenchOff() *NewerSchemaError {
+	if s == nil {
+		return nil
+	}
+	return s.benchOff
 }
 
 // LateWrites is how many writes were refused because the store was already
@@ -328,8 +341,20 @@ func (s *Store) LateWrites() int64 { return s.late.Load() }
 // applies the migrations. An error means the benchmark feature stays off.
 func OpenStore(dir string) (*Store, error) { return openStore(dir, len(migrations)) }
 
-// openStore applies at most upTo migrations (tests use it to build an older database).
-func openStore(dir string, upTo int) (*Store, error) {
+// OpenShared is OpenStore for the scheduler, whose other ledgers (the
+// configuration, access keys, model pins, learned needs, groups) share the
+// file: when only the bench migrations are ahead of this build it opens
+// the database anyway with the bench tables left exactly as they are (no
+// migration, no backfill) and BenchOff saying why. Every other failure is
+// OpenStore's.
+func OpenShared(dir string) (*Store, error) { return openStoreOpt(dir, len(migrations), true) }
+
+// openStore applies at most upTo migrations (tests use it to build an older
+// database).
+func openStore(dir string, upTo int) (*Store, error) { return openStoreOpt(dir, upTo, false) }
+
+// openStoreOpt is openStore; newerOK: see OpenShared.
+func openStoreOpt(dir string, upTo int, newerOK bool) (*Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("no data directory")
 	}
@@ -349,12 +374,16 @@ func openStore(dir string, upTo int) (*Store, error) {
 	}
 	s := &Store{db: db, path: path, jobs: make(chan job, 64)}
 	if err := s.migrate(upTo); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrating %s: %w", path, err)
+		var ne *NewerSchemaError
+		if !newerOK || !errors.As(err, &ne) {
+			db.Close()
+			return nil, fmt.Errorf("migrating %s: %w", path, err)
+		}
+		s.benchOff = ne
 	}
 	s.wg.Add(1)
 	go s.writer()
-	if upTo >= len(migrations) {
+	if s.benchOff == nil && upTo >= len(migrations) {
 		if err := s.backfillMeasurements(); err != nil {
 			s.Close()
 			return nil, fmt.Errorf("mapping old runs into measurements in %s: %w", path, err)
@@ -369,6 +398,12 @@ type NewerSchemaError struct{ Have, Know int }
 
 func (e *NewerSchemaError) Error() string {
 	return fmt.Sprintf("database is newer than this version: %d > %d (schema version; a newer scheduler migrated it)", e.Have, e.Know)
+}
+
+// BenchOffReason is what the benchmark routes, the health row and the log
+// say when only the bench tables are newer (OpenShared).
+func (e *NewerSchemaError) BenchOffReason() string {
+	return fmt.Sprintf("benchmarks are off: this database's benchmark tables are at version %d, this version knows up to %d; start a version that knows %d or newer", e.Have, e.Know, e.Have)
 }
 
 func (s *Store) migrate(upTo int) error {
@@ -827,51 +862,44 @@ func scanRun(sc interface{ Scan(...any) error }) (*Run, error) {
 	return &r, nil
 }
 
-// ListRuns lists runs newest first, without their steps.
+// ListRuns lists runs newest first, without their steps, with their number
+// and facts (ListRunsPage without the total).
 func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
-	q := `SELECT ` + runCols + ` FROM runs WHERE 1=1`
-	var args []any
-	if f.Suite != "" {
-		q += ` AND suite_id=?`
-		args = append(args, f.Suite)
-	}
-	if f.Kind != "" {
-		q += ` AND kind=?`
-		args = append(args, f.Kind)
-	}
-	if f.Benchmark != "" {
-		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=? OR json_extract(spec, '$.recipe')=?))`
-		args = append(args, f.Benchmark, f.Benchmark, f.Benchmark)
-	}
-	if f.State != "" {
-		q += ` AND state=?`
-		args = append(args, f.State)
-	}
-	limit := f.Limit
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	q += ` ORDER BY queued_at DESC, id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.db.Query(q, args...)
+	rs, _, err := s.ListRunsPage(f)
+	return rs, err
+}
+
+// RunStepModel is one (run, model file, profile) of a completed run's steps.
+type RunStepModel struct {
+	RunID, ModelFile, Profile string
+}
+
+// CompletedRunModels lists, once each, the model file and profile of every
+// step of a completed run: the catalog counts a model's reports from it.
+func (s *Store) CompletedRunModels() ([]RunStepModel, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT s.run_id, s.model_file, s.profile FROM run_steps s JOIN runs r ON r.id = s.run_id
+	  WHERE r.state = ? ORDER BY s.run_id`, RunCompleted)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Run
+	var out []RunStepModel
 	for rows.Next() {
-		r, err := scanRun(rows)
-		if err != nil {
+		var m RunStepModel
+		if err := rows.Scan(&m.RunID, &m.ModelFile, &m.Profile); err != nil {
 			return nil, err
 		}
-		r.Suite = nil // the list stays small; GET one run for the snapshot
-		out = append(out, *r)
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
 
 // GetRun returns a run with its steps and their requests, or ErrNotFound.
-func (s *Store) GetRun(id string) (*Run, error) {
+func (s *Store) GetRun(id string) (*Run, error) { return s.GetRunOpt(id, true) }
+
+// GetRunOpt is GetRun; without requests the steps come without their
+// request rows (phases, statistics and facts stay).
+func (s *Store) GetRunOpt(id string, requests bool) (*Run, error) {
 	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -879,13 +907,19 @@ func (s *Store) GetRun(id string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	steps, err := s.steps(id)
+	steps, err := s.stepsOpt(id, requests)
 	if err != nil {
 		return nil, err
 	}
 	r.Steps = steps
 	if err := s.attachTaskScores(r); err != nil {
 		return nil, err
+	}
+	if err := s.withFacts([]*Run{r}, nil); err != nil {
+		return nil, err
+	}
+	for i, slug := range EntrySlugs(r.Steps) {
+		r.Steps[i].Slug = slug
 	}
 	return r, nil
 }
@@ -1083,6 +1117,7 @@ func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 		unmarshalNull(stats, &st.Stats)
 		unmarshalNull(expect, &st.Expect)
 		unmarshalNull(cmp, &st.Comparison)
+		st.ReasonShort = ShortReason(st.Outcome, st.Reason, st.NodeCount)
 		out = append(out, st)
 	}
 	if err := rows.Err(); err != nil {

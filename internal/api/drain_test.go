@@ -12,6 +12,9 @@ func TestDrain_BusyModelUnloadsAfterItsRun(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notUnderTest(w, r) {
+			return
+		}
 		started <- struct{}{}
 		select {
 		case <-release:

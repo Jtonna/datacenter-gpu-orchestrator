@@ -22,9 +22,15 @@ export function sizeLine(m) {
   return [m.parameters, m.quant, m.size_bytes ? bytes(m.size_bytes) : null].filter(Boolean).join(' · ') || 'Size not known';
 }
 
-// stateBadge(m) -> the one badge of a model row.
+// testRun(i) -> "Test run e2": the mark of a run-scoped instance (its
+// scope; the catalog and the status give it), else null. Such an instance
+// counts only for itself: never in its production profile's state.
+export const testRun = i => (i && i.scope ? h('span.mdl-test', { 'data-scope': i.scope, title: 'A run-scoped load of ' + (i.production || 'its production profile') + ', under its own name' }, 'Test run ' + i.scope) : null);
+
+// stateBadge(m) -> the one badge of a model row: production's own state
+// (m.state leaves run-scoped instances out; so do the zones counted here).
 export function stateBadge(m, st) {
-  const insts = m.instances || [];
+  const insts = (m.instances || []).filter(i => !i.scope);
   if (m.state === 'ready') {
     const nodes = new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []));
     return badge(nodes.size ? `Ready on ${machines(st, nodes.size)}` : 'Ready', 'ready');
@@ -104,7 +110,7 @@ function head(st, inst, model, extra) {
   return h('div.ch',
     avatar(model || { name: inst.model_file || inst.profile }, 28),
     h('h2.name', key ? h('a', { href: href('models', [key]), style: 'color:inherit' }, model ? model.name : inst.model_file) : inst.profile),
-    instanceBadge(inst), extra, staleMark(inst),
+    instanceBadge(inst), testRun(inst), extra, staleMark(inst),
     h('span.mut', { style: 'font-weight:600' }, 'on ', nodeChips(names),
       inst.waiters > 0 && inst.state === 'starting' ? ` · ${plural(inst.waiters, 'request')} waiting for it` : null),
     h('span.cfg.right', { title: 'The configuration (profile) it was loaded with' }, inst.profile),
@@ -147,14 +153,14 @@ function readyCard(st, inst, model, open, toggle) {
       stat('Last used', serving ? 'now' : ago(inst.last_used, 'not yet')),
       stat('Load took', dur(inst.load_duration)),
       stat('Served', num(inst.requests_served || 0), inst.requests_served === 1 ? 'request' : 'requests'),
-      stat('Memory', gbNum(inst.device_total_mib || 0), 'GB', { title: mib(inst.device_total_mib || 0) + ' on the nodes, from the load log' }),
+      stat('Memory', gbNum(inst.device_total_mib || 0), 'GB', { title: mib(inst.device_total_mib || 0) + ' on the zones, from the load log' }),
       host > 0 ? stat('Host RAM', gbNum(host), 'GB', { title: mib(host) + ' on the machine that runs the scheduler' }) : null),
     (inst.nodes || []).map(n => {
       const name = nodeName(st, n.id), mem = nodeMemory(n);
       const hb = healthBadge(findNode(st, n.id)) || machineBadge(st, findNode(st, n.id));
       if (!mem.total_mib) {
         return h('div.nr', { key: 'mem-' + name }, h('span.mono', name, hb ? [' ', hb] : null), bar([], 1, 'No memory report'),
-          h('span.mono.fig.mut', n.budget_mib ? `– / ${gb(n.budget_mib)}` : DASH), h('span.mut.split', 'No memory was reported for this node'));
+          h('span.mono.fig.mut', n.budget_mib ? `– / ${gb(n.budget_mib)}` : DASH), h('span.mut.split', 'No memory was reported for this zone'));
       }
       return memoryRow(name, mem, n.budget_mib, hb);
     }),
@@ -182,9 +188,9 @@ function loadingCard(st, inst, model, open, toggle) {
   const uploadNote = total == null ? (phase === 'loading' ? 'Loading on this machine' : 'No upload needed')
     : sent != null ? `${bytes(sent)} of ${bytes(total)}` + (rate ? ` · ${num(rate, 0)} MB/s` : '') : `${bytes(total)} to upload`;
   const stepItems = [
-    { label: 'Pre-load check', state: at_('preflight'), note: phase === 'preflight' ? 'Checking free memory on the nodes' : 'Passed' },
+    { label: 'Pre-load check', state: at_('preflight'), note: phase === 'preflight' ? 'Checking free memory on the zones' : 'Passed' },
     { label: 'Start the server', state: at_('launching'), note: phase === 'launching' ? 'Starting' : phase === 'loading' ? 'Running' : '' },
-    { label: workers.length ? 'Upload to the nodes' : 'Load into memory', state: phase === 'loading' ? (stalled != null ? 'fail' : 'now') : '', note: phase === 'loading' ? uploadNote : '' },
+    { label: workers.length ? 'Upload to the zones' : 'Load into memory', state: phase === 'loading' ? (stalled != null ? 'fail' : 'now') : '', note: phase === 'loading' ? uploadNote : '' },
     { label: 'Ready', state: '', note: eta != null && stalled == null ? ['Expected ≈ ', clock(now() + eta * 1000, false)] : 'Not known yet' },
   ];
   const left = stalled != null ? h('span.err-t', `Stalled: nothing new for ${dur(Math.round(stalled))}`)
@@ -199,7 +205,7 @@ function loadingCard(st, inst, model, open, toggle) {
       left: h('span', frac != null ? h('span.pct', Math.round(frac * 100) + '%') : null, h('span.mut', { style: 'font-weight:600' }, frac != null ? ' · ' : '', `${dur(Math.round(elapsed))} elapsed`)),
       mid: left,
       right: deadline ? h('span', 'Gives up ', until(deadline)) : null,
-      foot: [startedAt ? 'Started ' + clock(startedAt) : '', frac != null ? (measured ? 'Measured from the nodes' : 'Estimated from the link speed') : ''],
+      foot: [startedAt ? 'Started ' + clock(startedAt) : '', frac != null ? (measured ? 'Measured from the zones' : 'Estimated from the link speed') : ''],
     })),
     workers.map(w => {
       const node = nodeByAddr(st, w.addr);
@@ -227,14 +233,21 @@ export function instanceCard(st, inst, model, open, toggle) {
 export function planCell(p, st) {
   const plan = p.plan || {};
   const raw = plan.reason ? 'The scheduler says: ' + plan.reason : null;
-  const nodes = plan.nodes && plan.nodes.length ? nodeChips(plan.nodes) : null;
+  // Names only where they are given (the page rule): a forced profile's own
+  // nodes. An automatic profile's plan picks among equal nodes and can pick
+  // others a moment later, so it says how many: "would load on 2 PS5s".
+  // A loaded instance names its nodes (instance cards); a chosen zone, in
+  // the Placement preview with its live memory rows.
+  const forced = (p.force_nodes || []).length > 0 || p.placement === 'forced';
+  const count = plan.nodes ? plan.nodes.length : 0;
+  const nodes = !count ? null : forced ? nodeChips(plan.nodes) : h('span', { 'data-would': count }, 'would load on ' + machines(st, count));
   // Whether a reload of the model can come from the nodes' file cache.
   const reload = reloadLine(plan.reload_from_cache, r => r.node || nodeName(st, r.id));
   switch (plan.action) {
-    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
+    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
     case 'serve': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Loaded now'), reload);
     case 'wait': return h('span.warn-t', { style: 'font-weight:700' }, 'Loading now');
-    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
+    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
     case 'queue': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'Would wait'), h('span.sub', plainReason(plan.reason)));
     case 'backoff': return h('span', { title: raw }, h('span.err-t', { style: 'font-weight:700' }, 'Held back'), h('span.sub', 'Its last load failed'));
     case 'reject': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'No'), h('span.sub', plainReason(plan.reason)));

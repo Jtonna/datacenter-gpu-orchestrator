@@ -31,10 +31,10 @@ func TestUILogsEntryAndLinks(t *testing.T) {
 	}
 	// every link goes through logsLink, which returns null while logging is off
 	for file, want := range map[string]string{
-		"views/nodes.js":              "logsLink(state.status, ' Logs', nodeQuery(n.id)",
-		"views/models/common.js":      "logsLink(st, 'Logs', profileQuery(inst.profile)",
-		uiNextDir + "views/models.js": "logsLink(st, 'Logs', profileQuery(l.model), from, to",
-		"views/benchmarks/runs.js":    "logsLink(state.status, 'Logs', '*', from, to",
+		"views/nodes.js":                  "logsLink(state.status, ' Logs', nodeQuery(n.id)",
+		"views/models/common.js":          "logsLink(st, 'Logs', profileQuery(inst.profile)",
+		uiNextDir + "views/models.js":     "logsLink(st, 'Logs', profileQuery(l.model), from, to",
+		uiNextDir + "views/bench/runs.js": "logsLink(state.status, 'Logs', '*', from, to",
 	} {
 		text := uiText(t, file)
 		if !strings.Contains(text, want) {

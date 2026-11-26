@@ -55,7 +55,8 @@ const fitW = w => (phone.matches ? Math.min(w, 340) : w);
 const shortDate = v => dateTime(v).replace(/ \d{4},/, ',').replace(/:\d\d$/, '');
 
 // lineChart({series:[{name, color:'mint', points:[{x: unixMs | number, y, tip, flag}]}],
-//   width: 720, height: 220, unit: 's', time: true (x is a time), zero: true (y starts at 0), label})
+//   width: 720, height: 220, unit: 's', time: true (x is a time), zero: true (y starts at 0), label,
+//   xText: v => 'text' (the x axis' end labels, for an x that is an index)})
 // A small line chart with a labelled y axis, four grid lines and a dot per point
 // (each dot has a tooltip with the exact value). It is drawn for `width` CSS
 // pixels and never grows beyond that, so its 11 px labels stay 11 px in a wide
@@ -71,6 +72,7 @@ export function lineChart(o) {
   let [ylo, yhi] = extent(all.map(p => p.y));
   if (o.zero) ylo = 0;
   let xlo = Math.min(...all.map(p => p.x)), xhi = Math.max(...all.map(p => p.x));
+  const x0 = xlo, x1 = xhi;
   if (xlo === xhi) { xlo -= 1; xhi += 1; }
   const ticks = niceTicks(ylo, yhi);
   const tickLabel = t => num(t, Math.abs(t) < 10 && t % 1 ? 1 : 0) + (o.unit ? ' ' + o.unit : '');
@@ -82,8 +84,9 @@ export function lineChart(o) {
     svg.appendChild(h('text', { x: L - 8, y: Y(t) + 4, 'text-anchor': 'end' }, tickLabel(t)));
   }
   const xl = v => (o.time ? clock(v, false) : num(v));
-  svg.appendChild(h('text', { x: L, y: H - 6, 'text-anchor': 'start' }, o.time ? shortDate(xlo) : xl(xlo)));
-  svg.appendChild(h('text', { x: W - R, y: H - 6, 'text-anchor': 'end' }, o.time ? shortDate(xhi) : xl(xhi)));
+  const end = v => (o.xText ? o.xText(v) : o.time ? shortDate(v) : xl(v));
+  svg.appendChild(h('text', { x: L, y: H - 6, 'text-anchor': 'start' }, o.xText ? end(x0) : end(xlo)));
+  svg.appendChild(h('text', { x: W - R, y: H - 6, 'text-anchor': 'end' }, o.xText ? end(x1) : end(xhi)));
   for (const s of o.series) {
     const pts = s.points.slice().sort((a, b) => a.x - b.x);
     if (pts.length > 1) svg.appendChild(h('polyline', { fill: 'none', class: 's-' + (s.color || 'mint'), 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',

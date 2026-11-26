@@ -60,7 +60,7 @@ var routeScopes = map[string]access.Scope{
 	"GET /api/bench/aggregates": access.Observe, "GET /api/bench/benchmarks": access.Observe, "GET /api/bench/benchmarks/{id}": access.Observe,
 	"GET /api/bench/benchmarks/{id}/results": access.Observe, "GET /api/bench/external": access.Observe, "GET /api/bench/external/{id}": access.Observe,
 	"GET /api/bench/groups": access.Observe, "GET /api/bench/groups/{id}": access.Observe, "GET /api/bench/groups/{id}/expand": access.Observe,
-	"GET /api/bench/measurements": access.Observe, "GET /api/bench/metrics": access.Observe, "GET /api/bench/profiles": access.Observe,
+	"GET /api/bench/measurements": access.Observe, "GET /api/bench/results/models": access.Observe, "GET /api/bench/metrics": access.Observe, "GET /api/bench/profiles": access.Observe,
 	"GET /api/bench/removals": access.Observe, "GET /api/bench/removals/preview": access.Observe, "GET /api/bench/runs": access.Observe,
 	"GET /api/bench/runs/{id}": access.Observe, "GET /api/bench/runs/{id}/export": access.Observe, "GET /api/bench/runs/{id}/measurements": access.Observe,
 	"GET /api/bench/runs/{id}/report": access.Observe, "GET /api/bench/runs/{id}/scores": access.Observe,
@@ -71,7 +71,7 @@ var routeScopes = map[string]access.Scope{
 	"GET /api/bench/task-sets/{id}": access.Observe, "GET /api/bench/trends": access.Observe,
 	"GET /api/config": access.Observe, "GET /api/config/exclude-nodes": access.Observe, "GET /api/config/export": access.Observe,
 	"GET /api/config/fleet": access.Observe, "GET /api/config/no-auto-nodes": access.Observe, "GET /api/config/node-overrides": access.Observe,
-	"GET /api/config/profiles": access.Observe, "GET /api/config/profiles/{id...}": access.Observe, "GET /api/config/recovery": access.Observe,
+	"GET /api/profiles/test": access.Observe, "GET /api/config/profiles": access.Observe, "GET /api/config/profiles/{id...}": access.Observe, "GET /api/config/recovery": access.Observe,
 	"GET /api/config/revisions": access.Observe, "GET /api/config/revisions/{n}": access.Observe, "GET /api/config/schema": access.Observe,
 	"GET /api/config/settings": access.Observe, "GET /api/config/tiers": access.Observe,
 	"GET /api/events": access.Observe, "GET /api/health": access.Observe, "GET /api/history": access.Observe,
@@ -107,24 +107,28 @@ var routeScopes = map[string]access.Scope{
 	"POST /api/models/unload/{model...}": access.Models, "GET /unload": access.Models, "POST /unload": access.Models,
 	"POST /api/nodes/{id}/force-unload": access.Models, "POST /api/cache/evict": access.Models,
 	"POST /api/models/drain/{model...}": access.Models, "POST /api/models/undrain/{model...}": access.Models,
+	"PUT /api/models/pin/{key...}": access.Models, "DELETE /api/models/pin/{key...}": access.Models, // pins (models page)
+	"POST /api/models/delete/{key...}": access.Models, "POST /api/models/trash/{id}/restore": access.Models, "POST /api/models/trash/{id}/remove": access.Models, "GET /api/models/trash": access.Observe, // the models trash
 	"POST /api/zone-actions/force-unload": access.Models, "POST /api/zone-actions/drain": access.Models,
 	"POST /api/bench/benchmarks/{id}/run": access.Models, "POST /api/bench/groups/{id}/run": access.Models,
 	"POST /api/bench/suites/{id}/run": access.Models, "POST /api/bench/runs/{id}/cancel": access.Models,
+	"PUT /api/bench/runs/{id}/pin": access.Models, "DELETE /api/bench/runs/{id}/pin": access.Models, // run pins, as model pins (slice 2; was settings)
 
 	// settings: configuration, profiles, benchmark definitions, scores
 	"PATCH /api/config/fleet": access.Settings, "PATCH /api/config/recovery": access.Settings, "PATCH /api/config/settings": access.Settings,
 	"PUT /api/config/fleet": access.Settings, "PUT /api/config/node-overrides": access.Settings, "PUT /api/config/recovery": access.Settings,
 	"PUT /api/config/tiers": access.Settings, "POST /api/config/import": access.Settings, "POST /api/config/profiles": access.Settings,
 	"PUT /api/config/profiles/{id...}": access.Settings, "DELETE /api/config/profiles/{id...}": access.Settings,
+	"POST /api/config/profiles/{rest...}":     access.Settings, // {id}/promote and {id}/demote: a profile edit
 	"POST /api/config/revisions/{n}/rollback": access.Settings,
 	"PUT /api/models/{key...}":                access.Settings, "DELETE /api/models/{key...}": access.Settings,
-	"POST /api/forget-need": access.Settings, "POST /api/needs/forget": access.Settings, "DELETE /api/nodes/{id}": access.Settings,
+	"POST /api/models/{key...}": access.Settings, // {file}/standard-set: writes profiles
+	"POST /api/forget-need":     access.Settings, "POST /api/needs/forget": access.Settings, "DELETE /api/nodes/{id}": access.Settings,
 	"POST /api/bench/benchmarks": access.Settings, "PUT /api/bench/benchmarks/{id}": access.Settings, "DELETE /api/bench/benchmarks/{id}": access.Settings,
 	"POST /api/bench/external": access.Settings, "PUT /api/bench/external/{id}": access.Settings, "DELETE /api/bench/external/{id}": access.Settings,
 	"POST /api/bench/groups": access.Settings, "PUT /api/bench/groups/{id}": access.Settings, "DELETE /api/bench/groups/{id}": access.Settings,
 	"POST /api/bench/suites": access.Settings, "PUT /api/bench/suites/{id}": access.Settings, "DELETE /api/bench/suites/{id}": access.Settings,
 	"POST /api/bench/task-sets": access.Settings, "DELETE /api/bench/task-sets/{id}": access.Settings,
-	"PUT /api/bench/runs/{id}/pin": access.Settings, "DELETE /api/bench/runs/{id}/pin": access.Settings,
 	"PUT /api/bench/runs/{id}/scores/{scorer}": access.Settings, "DELETE /api/bench/runs/{id}/scores/{scorer}": access.Settings,
 }
 

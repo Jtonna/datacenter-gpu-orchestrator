@@ -327,6 +327,27 @@ func TestUIFixtureServerModelActions(t *testing.T) {
 // sentence NoModelSource, a 409 for a taken name, 404 for an id the
 // scheduler forgot, the cancel answer, and the setting default_model_source
 // on GET /api/zones/pending and GET /api/config/settings.
+// --pending mixed: the list keeps a cancelled zone with its state beside a
+// waiting one (as the server does until the expiry); each answers by id.
+func TestUIFixtureServerPendingMixed(t *testing.T) {
+	get, _ := fixtureStart(t, "--zones", "groups", "--pending", "mixed")
+	var list struct {
+		Pending []map[string]any `json:"pending"`
+	}
+	get("/api/zones/pending", &list)
+	if len(list.Pending) != 2 || list.Pending[0]["state"] != PendingWaiting || list.Pending[1]["state"] != PendingCancelled ||
+		list.Pending[1]["state_text"] != pendingStateText[PendingCancelled] || list.Pending[1]["id"] != "pz-0000000000000002" {
+		t.Fatalf("list %+v", list.Pending)
+	}
+	for id, want := range map[string]string{"pz-0000000000000001": PendingWaiting, "pz-0000000000000002": PendingCancelled} {
+		var z map[string]any
+		get("/api/zones/pending/"+id, &z)
+		if z["state"] != want || z["id"] != id {
+			t.Errorf("%s: %v, want %s", id, z["state"], want)
+		}
+	}
+}
+
 func TestUIFixtureServerPending(t *testing.T) {
 	keys := func(v map[string]any) string {
 		var k []string

@@ -265,7 +265,7 @@ func TestToolsListSchemas(t *testing.T) {
 	for _, tl := range res.Tools {
 		ann[tl.Name] = tl.Annotations
 	}
-	if ann["unload_model"]["destructiveHint"] != true || ann["rollback_config"]["destructiveHint"] != true || ann["delete_profile"]["destructiveHint"] != true {
+	if ann["unload_model"]["destructiveHint"] != true || ann["rollback_config"]["destructiveHint"] != true || ann["delete_profile"]["destructiveHint"] != true || ann["remove_deleted_model"]["destructiveHint"] != true {
 		t.Error("destructive tools must say so")
 	}
 	if ann["get_status"]["readOnlyHint"] != true || ann["load_model"]["destructiveHint"] != false {
@@ -308,7 +308,7 @@ var expected = map[string]struct {
 	"list_suites":           {`{}`, "GET", "/api/bench/suites", "", "", nil},
 	"get_suite":             {`{"id":"s1"}`, "GET", "/api/bench/suites/s1", "", "", nil},
 	"get_bench_state":       {`{}`, "GET", "/api/bench/state", "", "", nil},
-	"list_runs":             {`{"suite":"s1","state":"completed","limit":5,"kind":"suite","benchmark":"b"}`, "GET", "/api/bench/runs", "benchmark=b&kind=suite&limit=5&state=completed&suite=s1", "", nil},
+	"list_runs":             {`{"suite":"s1","state":"completed","limit":5,"kind":"suite","benchmark":"b","model":"a.gguf","offset":10,"result":"has_failed"}`, "GET", "/api/bench/runs", "benchmark=b&kind=suite&limit=5&model=a.gguf&offset=10&result=has_failed&state=completed&suite=s1", "", nil},
 	"get_run_measurements":  {`{"id":"br-1","step":0,"metric":"load_s"}`, "GET", "/api/bench/runs/br-1/measurements", "metric=load_s&step=0", "", nil},
 	"query_measurements":    {`{"benchmark":"b","metric":"ttft_ms","since":"7d","limit":50,"ctx":8192,"placement":"any:2"}`, "GET", "/api/bench/measurements", "benchmark=b&ctx=8192&limit=50&metric=ttft_ms&placement=any%3A2&since=7d", "", nil},
 	"list_bench_metrics":    {`{}`, "GET", "/api/bench/metrics", "", "", nil},
@@ -321,7 +321,13 @@ var expected = map[string]struct {
 	"list_run_transcripts":  {`{"id":"r1"}`, "GET", "/api/bench/runs/r1/transcripts", "", "", nil},
 	"get_step_transcript":   {`{"id":"r1","step":2,"format":"md"}`, "GET", "/api/bench/runs/r1/steps/2/transcript", "format=md", "", nil},
 	"run_benchmark":         {`{"id":"lo","note":"n","only_when_idle":false,"inputs":{"model":"m.gguf"}}`, "POST", "/api/bench/benchmarks/lo/run", "", `{"inputs":{"model":"m.gguf"},"note":"n","only_when_idle":false}`, nil},
-	"get_run":               {`{"id":"br-1"}`, "GET", "/api/bench/runs/br-1", "", "", nil},
+	"get_run":               {`{"id":"47","requests":false}`, "GET", "/api/bench/runs/47", "requests=false", "", nil},
+	"list_bench_groups":     {`{}`, "GET", "/api/bench/groups", "", "", nil},
+	"get_bench_group":       {`{"id":"g1"}`, "GET", "/api/bench/groups/g1", "", "", nil},
+	"create_bench_group":    {`{"group":{"id":"g"}}`, "POST", "/api/bench/groups", "", `{"id":"g"}`, nil},
+	"update_bench_group":    {`{"id":"g","group":{"id":"g"}}`, "PUT", "/api/bench/groups/g", "", `{"id":"g"}`, nil},
+	"delete_bench_group":    {`{"id":"g"}`, "DELETE", "/api/bench/groups/g", "", "", nil},
+	"run_bench_group":       {`{"id":"g","baseline":"br-0","note":"n"}`, "POST", "/api/bench/groups/g/run", "", `{"baseline":"br-0","note":"n"}`, nil},
 	"export_run":            {`{"id":"br-1","format":"csv","detail":"phases"}`, "GET", "/api/bench/runs/br-1/export", "detail=phases&format=csv", "", nil},
 	"get_bench_aggregates":  {`{"suite":"s","benchmark":"b","profile":"p","since":"7d","until":"2","limit_runs":4,"env":"same"}`, "GET", "/api/bench/aggregates", "benchmark=b&env=same&limit_runs=4&profile=p&since=7d&suite=s&until=2", "", nil},
 	"get_bench_trends":      {`{"benchmark":"b","metric":"task_points","scorer":"kit","limit":9}`, "GET", "/api/bench/trends", "benchmark=b&limit=9&metric=task_points&scorer=kit", "", nil},
@@ -365,6 +371,12 @@ var expected = map[string]struct {
 	"force_unload_zones":    {`{"nodes":["n1"],"dry_run":true}`, "POST", "/api/zone-actions/force-unload", "", `{"dry_run":true,"nodes":["n1"]}`, nil},
 	"drain_model":           {`{"model":"gemma"}`, "POST", "/api/models/drain/gemma", "", "", nil},
 	"undrain_model":         {`{"model":"gemma"}`, "POST", "/api/models/undrain/gemma", "", "", nil},
+	"pin_model":             {`{"file":"gemma.gguf","comment":"daily"}`, "PUT", "/api/models/pin/gemma.gguf", "", `{"comment":"daily"}`, nil},
+	"unpin_model":           {`{"file":"command:whisper","comment":"done"}`, "DELETE", "/api/models/pin/command:whisper", "", `{"comment":"done"}`, nil},
+	"delete_model":          {`{"file":"gemma.gguf","comment":"unused","dry_run":true,"interrupt":true}`, "POST", "/api/models/delete/gemma.gguf", "", `{"comment":"unused","dry_run":true,"interrupt":true}`, nil},
+	"list_deleted_models":   {`{}`, "GET", "/api/models/trash", "", "", nil},
+	"restore_model":         {`{"id":"0123456789ab","comment":"back","rename_taken":true}`, "POST", "/api/models/trash/0123456789ab/restore", "", `{"comment":"back","rename_taken":true}`, nil},
+	"remove_deleted_model":  {`{"id":"0123456789ab","comment":"owner asked","dry_run":true}`, "POST", "/api/models/trash/0123456789ab/remove", "", `{"comment":"owner asked","dry_run":true}`, nil},
 	"create_pending_zone":   {`{"name":"zone-9","group":"rack-a"}`, "POST", "/api/zones/pending", "", `{"group":"rack-a","name":"zone-9"}`, nil},
 	"list_pending_zones":    {`{}`, "GET", "/api/zones/pending", "", "", nil},
 	"cancel_pending_zone":   {`{"id":"pz-1"}`, "DELETE", "/api/zones/pending/pz-1", "", "", nil},

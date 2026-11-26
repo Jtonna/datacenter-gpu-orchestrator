@@ -13,7 +13,7 @@ var testOpts = BuildOptions{
 	ServerBin:   "llama-server-rpc",
 	ModelsDir:   "/models",
 	LocalDevice: "CUDA0",
-	CacheRAMMiB: 2048,
+	CacheRAMMiB: 2048, CtxCheckpoints: 32,
 }
 
 func remote(id, addr string, budget int) core.PlacedNode {
@@ -49,7 +49,7 @@ func TestBuildArgsLlama(t *testing.T) {
 
 	base := func(port, ctx, par string) []string {
 		return []string{"llama-server-rpc", "--host", "127.0.0.1", "--port", port, "--model", "/models/g.gguf",
-			"--n-gpu-layers", "999", "--fit", "off", "--ctx-size", ctx, "--parallel", par, "--jinja", "--cache-ram", "2048", "-lv", "4"}
+			"--n-gpu-layers", "999", "--fit", "off", "--ctx-size", ctx, "--parallel", par, "--jinja", "--cache-ram", "2048", "--ctx-checkpoints", "32", "-lv", "4"}
 	}
 	cat := func(parts ...[]string) []string {
 		var out []string
@@ -112,7 +112,7 @@ func TestBuildArgsMatchesAppendixA1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 192.0.2.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on"
+	want := "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 --ctx-checkpoints 32 -lv 4 --rpc 192.0.2.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on"
 	if got := RenderCommand(argv); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -302,5 +302,24 @@ func TestChildEnvOverrides(t *testing.T) {
 	}
 	if got := ChildEnvOverrides(cmdProf, remoteOnly); len(got) != 0 {
 		t.Errorf("kind: command must be unaffected: %q", got)
+	}
+}
+
+// The instance command joins the model with the shared path rule
+// (internal/modelpath): a sub-folder keeps working, a path the rule refuses
+// never reaches llama-server.
+func TestBuildArgsModelPathRule(t *testing.T) {
+	pl := core.Placement{Nodes: []core.PlacedNode{local(1)}}
+	p := llamaProfile()
+	p.Model = "sub/g.gguf"
+	argv, err := BuildArgs(p, pl, 1, testOpts)
+	if err != nil || argv[6] != "/models/sub/g.gguf" {
+		t.Fatalf("sub-folder: %q %v", argv, err)
+	}
+	for _, bad := range []string{".trash/0123/g.gguf", "../g.gguf", "/etc/g.gguf", `sub\g.gguf`} {
+		p.Model = bad
+		if argv, err := BuildArgs(p, pl, 1, testOpts); err == nil {
+			t.Errorf("model %q: built %q, want refused", bad, argv)
+		}
 	}
 }

@@ -18,7 +18,18 @@ func (c *schedCore) arrive(w *waiter) {
 	w.id = c.next()
 	w.arrived = c.now
 	c.waiters[w.id] = w
-	p := c.cfg.Profiles[w.profile]
+	if w.scoped != nil { // scoped.go: a scoped load
+		if c.cfg.Profiles[w.scoped.Name] != nil {
+			c.fail(w, badScoped("%s is a configured profile id", w.scoped.Name))
+			return
+		}
+		w.scoped = c.realScoped(w.scoped) // realctx.go: the trained-context rule, as for a configured profile
+		if _, err := c.addScoped(w.scoped); err != nil {
+			c.fail(w, err)
+			return
+		}
+	}
+	p := c.profile(w.profile)
 	if p == nil {
 		c.fail(w, errUnknown(w.profile))
 		return
@@ -297,7 +308,7 @@ func (c *schedCore) admit(in *inst, w *waiter) {
 	in.served++
 	in.lastUsed = c.now
 	c.answer(w, answer{grant: &grant{ID: id, Addr: instance.AddrOf(in.child), APIKey: instance.APIKeyOf(in.child),
-		Profile: in.prof.Name, Alias: w.alias, Gone: in.gone, Instance: in.iid, Session: in.sessionID, Nodes: c.leaseNodesOf(in)}})
+		Profile: in.prof.Name, Alias: w.alias, Gone: in.gone, CutBy: in.cutReader(), Instance: in.iid, Session: in.sessionID, Nodes: c.leaseNodesOf(in), Ctx: instCtx(in)}})
 	c.emit(FeedAdmitted, in.prof.Name, func(e *FeedEvent) { e.RequestID = id })
 }
 

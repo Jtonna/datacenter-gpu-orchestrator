@@ -258,11 +258,11 @@ func (s ctxStep) holds(l *learnedNeed) bool {
 type deriveState struct {
 	waiting bool // an estimate was skipped: its model's header is not read yet
 	est     map[needKey]NeedInfo
-	seed   maphash.Seed
-	seeded bool
-	sum    uint64
-	groups map[needKey]*deriveGroup
-	all    []DerivePair // every group's pairs, sorted; nil until asked
+	seed    maphash.Seed
+	seeded  bool
+	sum     uint64
+	groups  map[needKey]*deriveGroup
+	all     []DerivePair // every group's pairs, sorted; nil until asked
 	// work done (tests)
 	estCalls, pairBuilds int
 }
@@ -314,7 +314,7 @@ func (c *schedCore) deriveIndex() *deriveState {
 	d.sum, d.all, d.groups = sum, nil, map[needKey]*deriveGroup{}
 	for _, ls := range c.learned {
 		for k, l := range ls {
-			if l.TotalMiB <= 0 || l.key.kind == core.KindCommand {
+			if l.TotalMiB <= 0 || l.key.kind == core.KindCommand || scopedOrigin(l) {
 				continue
 			}
 			g := l.key.noCtx()

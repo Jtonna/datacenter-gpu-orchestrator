@@ -1,6 +1,7 @@
 // MCP access keys (design: boards MCP, MCP-New, MCP-Created, MCP-Manage;
 // the mockup is the requirement). Replaced the classic page (the classic UI
-// is removed; its MCP tool list, GET /api/mcp/tools, is not drawn here).
+// is removed; its MCP tool list, GET /api/mcp/tools, is the Tools section
+// below the keys, which the boards do not draw).
 //
 //   - the list: Access keys · N active, New key; Name, Key, Can, Expires,
 //     Last used, Status, Manage (Key and Last used drop out when the docked
@@ -100,10 +101,32 @@ async function askComment(title, lines, label, danger) {
   return r && r.value ? r.comment : undefined;
 }
 
+// toolsPart(doc, error) -> "Tools": every MCP tool an agent can call, by
+// group, with what it does and the permission it needs. Read-only. Not on
+// the boards: it keeps what the classic MCP page listed.
+function toolsPart(doc, error) {
+  const head = h('div.mcp-head', h('h2', 'Tools'), doc ? h('span.mut', `${plural((doc.tools || []).length, 'tool')} an agent can call` + (doc.server && doc.server.version ? ` · version ${doc.server.version}` : '')) : null);
+  if (!doc) return h('section.w.mcp.mcp-tools', { key: 'tools' }, head, error ? h('p.mut.mcp-pad', 'The tool list could not be read: ' + error) : skeleton(3));
+  const all = doc.tools || [];
+  return h('section.w.mcp.mcp-tools', { key: 'tools', 'aria-label': 'Tools' }, head,
+    (doc.groups || []).map(g => {
+      const mine = all.filter(t => t.group === g.id);
+      if (!mine.length) return null;
+      return h('details.mcp-tg', { key: 'g-' + g.id, 'data-group': g.id },
+        h('summary', h('b', g.title), h('span.ktag.t-gone', num(mine.length)), h('span.mut', g.note)),
+        h('table.mcp-tbl.mcp-ttbl', h('thead', h('tr', h('th', { scope: 'col' }, 'Tool'), h('th', { scope: 'col' }, 'What it does'), h('th', { scope: 'col' }, 'Needs'))),
+          h('tbody', mine.map(t => h('tr', { key: t.name, 'data-tool': t.name },
+            h('td.mono', t.name),
+            h('td', { title: t.description || null }, t.summary || t.description || '', t.destructive ? h('span.ktag.t-soon.mcp-dz', { title: 'The tool replaces or deletes something. Configuration changes can be rolled back.' }, 'Changes or removes') : null),
+            h('td', LABEL[t.scope] || t.scope || '–'))))));
+    }));
+}
+
 registerView({
   id: 'mcp', title: 'MCP',
   mount(el, route0) {
     let route = route0, data = null, error = '', alive = true, fresh = '';
+    let tools = null, toolsError = ''; // GET /api/mcp/tools: what an agent can do (read-only; not on the boards)
     let panel = null, panelFor = '', shown = null; // shown: {id, key, settings, rotated} while the Created/Rotated panel is open
 
     async function load() {
@@ -112,6 +135,7 @@ registerView({
       view.refresh(); syncPanel(true);
     }
     const offConfig = listen('config', ev => { if (!ev || !ev.section || ev.section === 'agents') load(); });
+    api.get('/api/mcp/tools').then(t => { tools = t; toolsError = ''; }, e => { toolsError = e.message; }).then(() => { if (alive) view.refresh(); });
     const agentOf = id => ((data && data.agents) || []).find(a => a.id === id);
     const go = q => navigate('mcp', [], q, true);
 
@@ -358,7 +382,7 @@ registerView({
     const view = liveView(el, () => {
       if (error && !data) return [h('section.w.mcp', { key: 'err' }, h('div.mcp-head', h('h2', 'Access keys')), banner('err', ['The keys could not be read: ', error]))];
       if (!data) return [h('section.w.mcp', { key: 'wait' }, skeleton(6))];
-      return [list()];
+      return [list(), toolsPart(tools, toolsError)];
     }, ['conn']);
     load();
     return {

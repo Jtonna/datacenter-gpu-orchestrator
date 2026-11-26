@@ -106,14 +106,14 @@ func newBase(b Bootstrap) *Config {
 		Listen: listen, ModelsDir: models, DataDir: b.DataDir, HistoryDir: b.HistoryDir, ChildLogDir: b.ChildLogDir, ProgramsDir: b.ProgramsDir,
 		Fleet:        Fleet{StaleAfter: 60 * time.Second},
 		ChildLogKeep: DefaultChildLogKeep, HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles,
-		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs,
+		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs, ModelTrashDays: DefaultModelTrashDays,
 		DefaultUserName: DefaultDefaultUserName,
-		Bench:         Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
-		Defaults:      DefaultDefaults(),
-		Recovery:      DefaultRecovery(),
-		Logs:          DefaultLogs(),
-		NodeOverrides: map[string]NodeOverride{},
-		Profiles:      map[string]*core.Profile{},
+		Bench:           Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
+		Defaults:        DefaultDefaults(),
+		Recovery:        DefaultRecovery(),
+		Logs:            DefaultLogs(),
+		NodeOverrides:   map[string]NodeOverride{},
+		Profiles:        map[string]*core.Profile{},
 	}
 }
 
@@ -174,6 +174,8 @@ func Build(doc *Document, b Bootstrap, o Options) (*Config, error) {
 	if exists == nil {
 		exists = func(p string) bool { _, err := os.Stat(p); return err == nil }
 	}
+	c.modelNote, c.keepArgs = o.ModelNote, o.KeepArgs
+	c.trainedCtx, c.keepCtx = o.TrainedCtx, o.KeepCtx
 	if err := c.validate(raws, c.modelCheck(o, exists)); err != nil {
 		return nil, err
 	}

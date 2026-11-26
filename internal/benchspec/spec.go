@@ -61,6 +61,9 @@ type Request struct {
 	Seed        *int64    `json:"seed,omitempty" yaml:"seed,omitempty"`
 	CachePrompt *bool     `json:"cache_prompt,omitempty" yaml:"cache_prompt,omitempty"`
 	Stream      *bool     `json:"stream,omitempty" yaml:"stream,omitempty"`
+	// NoThinking sends chat_template_kwargs {"enable_thinking": false}: set by
+	// the context fill, never read from a benchmark document.
+	NoThinking bool `json:"-" yaml:"-"`
 }
 
 // Temp is the sampling temperature (default 0).

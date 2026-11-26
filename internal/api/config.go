@@ -34,6 +34,7 @@ func (s *Server) configRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/config/profiles/{id...}", s.cfgProfileGet)
 	m.HandleFunc("PUT /api/config/profiles/{id...}", s.cfgProfilePut)
 	m.HandleFunc("DELETE /api/config/profiles/{id...}", s.cfgProfileDelete)
+	m.HandleFunc("POST /api/config/profiles/{rest...}", s.cfgProfileStage) // {id}/promote, {id}/demote
 	m.HandleFunc("GET /api/config/tiers", s.cfgSectionGet("tiers"))
 	m.HandleFunc("PUT /api/config/tiers", s.cfgTiersPut)
 	m.HandleFunc("GET /api/config/settings", s.cfgSectionGet("settings"))
@@ -759,4 +760,47 @@ func (s *Server) PublishConfig(ev cfgsvc.ChangeEvent) {
 	}
 	s.catalogDirty(false) // profiles and their plans are part of the model catalog
 	s.ws.publishConfig(map[string]any{"revision": ev.Revision, "audit_entry_ids": ids, "section": ev.Section, "target": ev.Target, "source": ev.Source, "actor": ev.Actor})
+}
+
+// cfgProfileStage is POST /api/config/profiles/{id}/promote and /demote
+// (profiles slice B2): the profile's stage set to production or test, with a
+// required comment; audited as promote or demote, nothing written when the
+// profile already has that stage.
+func (s *Server) cfgProfileStage(w http.ResponseWriter, r *http.Request) {
+	rest := r.PathValue("rest")
+	var id, stage string
+	switch {
+	case strings.HasSuffix(rest, "/promote"):
+		id, stage = strings.TrimSuffix(rest, "/promote"), config.StageProduction
+	case strings.HasSuffix(rest, "/demote"):
+		id, stage = strings.TrimSuffix(rest, "/demote"), config.StageTest
+	default:
+		apiErr(w, http.StatusNotFound, "no such route: POST /api/config/profiles/%s (want {id}/promote or {id}/demote)", rest)
+		return
+	}
+	sv := s.svc(w)
+	if sv == nil {
+		return
+	}
+	_, comment, ok := bodyObject(w, r)
+	if !ok {
+		return
+	}
+	if comment == "" {
+		comment = audit.FromRequest(r).Comment
+	}
+	if strings.TrimSpace(comment) == "" {
+		apiErr(w, http.StatusBadRequest, "a comment is required (body {\"comment\": \"...\"} or the X-Comment header)")
+		return
+	}
+	o, ok := s.writeOpts(w, r, comment)
+	if !ok {
+		return
+	}
+	res, err := sv.SetStage(r.Context(), o, id, stage)
+	if err != nil {
+		s.cfgErr(w, err)
+		return
+	}
+	s.respondWrite(w, http.StatusOK, res, map[string]any{"id": id, "stage": stage})
 }

@@ -55,7 +55,7 @@ func TestUIReserveReadsOnlyServerKeys(t *testing.T) {
 		"nd":  statusNodeReserveKeys,
 		"res": nodeReservationKeys,
 		"mem": planMemoryKeys,
-		"row": append(slices.Clone(planMemoryNodeKeys), planMemoryNodeOptionalKeys...),
+		"row": append(append(slices.Clone(planMemoryNodeKeys), planMemoryNodeOptionalKeys...), planMemoryNodeHostMemoryKey),
 		"by":  planReservedByKeys,
 	}
 	// leave out the header comment, which names the keys in prose
@@ -78,5 +78,18 @@ func TestUIReserveReadsOnlyServerKeys(t *testing.T) {
 	}
 	if v := uiText(t, uiNextDir+"views/placement.js"); !strings.Contains(v, "memoryTable(plan.memory") {
 		t.Error("next/views/placement.js does not show the plan's memory table")
+	}
+}
+
+// planMemoryNodeHostMemoryKey is written on the host node's row only while
+// count_host_memory counts the host process's own memory (scheduler hostmem.go).
+const planMemoryNodeHostMemoryKey = "host_memory_mib"
+
+func TestPlanRowHostMemoryKey(t *testing.T) {
+	if _, ok := jsonView(scheduler.PlanMemoryNode{HostMemoryMiB: 1608}).(map[string]any)[planMemoryNodeHostMemoryKey]; !ok {
+		t.Error("no host_memory_mib on a row that counts it")
+	}
+	if _, ok := jsonView(scheduler.PlanMemoryNode{}).(map[string]any)[planMemoryNodeHostMemoryKey]; ok {
+		t.Error("host_memory_mib on a row that does not count it")
 	}
 }

@@ -10,6 +10,292 @@ No agent change, no new port, no schema change, no new setting.
 - **Why.** The measured need follows the shape and device count on any consoles, but per-node peaks and learned shares apply only to the set they were measured on. Taking that set again makes them apply.
 - **What it never changes.** Fit is still decided on the exact figures, and every action (start, queue, reject) is what it was. Forced profiles, chosen zones and tolerance 0 are untouched.
 
+## Web UI: the Models list's Needs cell holds the figure alone; Requests at 1280
+
+No server change.
+
+- **Models list.** The Needs cell holds the figure alone ("~5.3 GB"), right-aligned like the range rows. That a need is written by hand, and why no configuration can be placed, are on the line under the model's name: "A program on this machine · need set by hand · runs only on host-1, which is excluded" (one line inside the name column, ending in "…" with the whole line on hover). Before, "~5.3 GB, set by hand" with the reason under it was wider than its column and was painted over Profiles and Last used; a file with one written need ran into "1 profile".
+- **Requests.** Zones is one line of at most 18 characters ending in "…", the whole list on hover, and Model keeps at least the room for a profile's shown name ("TEST - p4-qwen4b-107" whole) at 1280 px with the menu open.
+- **Profiles on a phone.** The Zones column goes below 460 px (it is in the panel), so the profile's name is not squeezed to a few letters.
+- **A layout test in a real browser.** `scripts/ui-layout.mjs` opens pages in headless Chrome and fails when the text of two cells of a table row overlaps or comes within 4 px on a line, when text runs past its row or (from 720 px) past its card, or when the page scrolls sideways. `TestUILayoutNoOverlap` runs it on the Models list and panel, Profiles and Requests (fixture `--models written --long-names`) at 1536, 1280 and 390 px; it skips without Chrome (`UI_BROWSER`) and with `-short`.
+
+## Web UI: a request's Model cell never widens its table
+
+No server change.
+
+- The Model cell of a request row (Overview, Requests, Activity) is one line that takes the room the other columns leave, up to 40 characters in the Overview card and 48 on the Requests page: the profile's shown name stays whole as long as the column allows, the model's short name gives way first, each ends in "…", and the whole text (with the profile id and the model file) is on hover. Before, a long test profile ("TEST - bench-…-2304 · tinyllama-1.1b-chat-v1.0") widened the Overview's card past the window at 1280 px and cut its last columns. On the Requests page the cell no longer wraps.
+- On a phone the Requests table scrolls inside its card, the Model filter is no wider than its bar, and the Overview's Requests card no longer lets a hidden column label widen the page.
+
+## Restore keeps stored profiles
+
+No agent change, no new port, no table, no setting, no schema change (one new value of model_trash.state: held_back).
+
+- A model restored from the trash gets its profiles back exactly as they were stored, also those a new write would refuse (since v79: a ctx above the model's trained context). Before, such a restore was refused with `config_refused` and the file stayed in the trash. The same holds for a delete that puts its profiles back (`loaded_again`, `move_failed`, `read_only`), the start's repair of a cut delete or restore, and a configuration rollback to a revision that holds such profiles. The answer (and the page's sentence after a restore) carries them as `warnings`, never as a refusal. A new profile with any of them is refused as before.
+- A restore never leaves the file in the trash because of a profile. A name taken meanwhile still refuses it by default, now naming both ways out: `rename_taken: true`, or the new `hold_back_refused: true`, which brings the file and its other profiles back and keeps the taken ones in Deleted models as a `held_back` item (new record state, no schema change) to add later by restoring it again. A profile any rule refuses even as stored is held back the same way, without an option. The answer lists `held_back` ([{id, reason}]) and `state` (restored or held_back); the page says it after a restore and shows the held-back item with an "Add the held-back profiles" button.
+- The delete's dry run answers `restore_note`: every profile comes back as it is, naming those a new write would refuse (a note); the delete dialog shows it.
+
+## Scheduler image: the process's memory in one read; the wheel stays over overlays
+
+No agent change, no new port, no new route, no table, no setting. New fields only: `GET /api/system` gains `runtime`; profile entries gain `needs_written`; a rejected plan carries its need.
+
+- **`GET /api/system` `runtime`**: the scheduler process's own memory, so a memory question is one read: `heap_inuse_bytes`, `heap_alloc_bytes`, `heap_objects`, `sys_bytes`, `goroutines`, `gc_cycles`, `last_gc_at` (unix ms, 0 before the first collection) and `read_at` (unix ms). Read with `runtime.ReadMemStats` at most once every 5 s and served from that copy in between.
+- The mouse wheel over an overlay that does not scroll (the System health popup at a desktop width, a popover, a context menu, the Ask Potluck drawer, a side panel's head and foot, the shade behind a panel, the drawer or a dialog) no longer scrolls the page behind; a list inside an overlay that can still scroll takes the wheel as before (`core/wheel.js`).
+- **A request row names its profile.** The Model column of the Requests page, the Overview's runs and Activity's recent requests prints the profile's shown name ("TEST - p4-qwen4b-107" for a test profile) with the model's short name beside it ("· qwen3.5-4b"), instead of the model's short name and context ("qwen3.5-4b:2k"), which read like a production profile id that does not exist. A run-scoped profile is named by its production profile with "@<scope>". A request whose profile the configuration no longer has prints its stored id with "profile no longer exists". The Requests page's Model filter lists the shown names. Activity now reads the catalog for the names (names only, no live plans), as Requests and the Overview do.
+- **A need written in the profile is shown whatever the plan says.** A plan that rejects or backs off before placing (a forced or local-only profile on an excluded or paused machine, a gone forced node, a back-off) now carries the profile's need: `POST /api/plan` `need_mib` and `need_basis`, the profile entries of `GET /api/profiles` and `GET /api/models` `needs_mib`. The entries gain `needs_written` (true when the need is `needs_mib` written by hand). The Models list says "~5.3 GB, set by hand" with the reason under it ("Runs only on host-1, which is excluded"); the panel says the same. The placement page and a zone's plan show the need beside the refusal. A dash stays for a need nobody knows.
+- A tab left open on the Models page no longer doubles the plan rounds after a scheduler restart (the restart fix of the previous section, now in an image): one page open by another browser costs one round of plans, and that round is the standing tab's catalog too.
+
+## Web UI: benchmark pages, second round; one round of plans per page open; a calmer status loop
+
+No agent change, no new port, no table, no setting. One new query on an existing route: `GET /api/models?only=disk`.
+
+- A group's entries show the board's "Smallest that fits" placement greyed, with its reason on hover (benchmarks slice 7, B6): no group can ask for it yet.
+- A benchmark report's subtitle and the run panel's sub-headings name the recipe ("Cold load, response and repeat"), not the runner's generated name with its bracket ("(model.gguf, 8k, nodes:...)"); the model, the placement and the context are already said in words beside it.
+- `GET /api/models/<key>/icon` looks the model's family up in the catalog the server holds; it no longer asks for a fresh catalog, which computed every profile's plan again when the status had moved since the last `GET /api/models` (one round per page of avatars). `GET /api/models` itself still computes fresh plans when the status moved.
+- The live channel reads the status every 2 s while nothing is starting, stopping, draining or queued, instead of every 250 ms; a real change wakes it at once (a scheduler event: an instance's state, a load, a request; a history event: a node lost, joined or excluded; a write through the API), and it keeps the 250 ms pace for 3 s after a wake and while anything moves. A memory change alone shows within 2 s. The catalog's status signature is computed only while a client holds the `models` topic. New option `WSIdlePace` (default 2 s).
+- The Models list writes a file under 0.1 GB in MB ("52 MB", "under 1 MB"), as the trash page.
+- **`GET /api/models?only=disk`** (permission as `GET /api/models`): the disk block alone, `{"disk": {...}}`, the same fields as the catalog's; it computes no plans. The Models page reads its disk figures again (at most every 30 s) with it instead of the whole catalog, which computed every profile's plan each time. Any other value of `only` is refused (400).
+- One open of a page costs at most one round of plans. The Models page reads the catalog once (it read it twice: the catalog and the disk figures), and subscribes the live channel to `models` once that REST answer is in (a subscribe first, with plans older than 60 s, computed them for the channel and the REST read again). With the icon reads above, the Overview and the benchmark pages cost the one `GET /api/models` round.
+- **A tab open across a restart no longer costs a round of every plan per catalog change.** The catalog's version counted from 1 in each process; a tab that stayed open across a restart (or an image switch) kept the old server's higher version, ignored the new server's catalog as "older", and read every change as not fitting its copy, so it read the whole catalog again over REST (every profile's plan) after each change: one more round on every page open anywhere, and on every `GET /api/models` (live v84, the owner's tab open since the switch). The first catalog of a process is now numbered by the time it is built (unix ms), so versions keep rising across restarts, and the page takes a new server's catalog whatever its version (its hello's `started_at` changed). The `X-Catalog-Version` header and the `version` fields are therefore large numbers now.
+- **Agents' heartbeats no longer wake the live channel's status loop.** A heartbeat (`POST /api/pool/nodes/<id>/heartbeat`) and a log upload (`.../logs`) are writes, and every write woke the loop and held it at 250 ms for 3 s: seven agents every 2 s held it there for good, so the 2 s idle pace above never applied on a fleet with agents (measured on a test scheduler with seven fake agents and 315 profiles, one tab on the Overview: 8.0 loop steps a second on v83 and v84, 4.1 now; with no tab 3.5, the heartbeats themselves). Their memory figures reach a page at the idle pace; an agent joining or leaving is recorded in the history, which wakes the loop. Any other write now wakes it when it arrives as well as when it ends, so a request that waits in the queue shows within 250 ms.
+- The health topic judges the status the status loop (or `GET /api/status`) read within the last 3 s instead of asking the scheduler's loop again every 2 s.
+- A side panel, the drawer, a dialog and the health popup keep the mouse wheel at the end of their scroll: the page behind no longer moves (`overscroll-behavior: contain`).
+- The Runs page reads its list once per filter set (it asked again on every draw while the answer was on its way: 8 reads on live v83); the benchmark pages read the Overview's recent runs and results per model only on the Overview.
+
+## Scheduler image: the need estimate leaves out the MTP block's KV
+
+No agent change, no new port, no new route, no table, no setting.
+
+- **The KV part of an estimated need** counts only the trunk's attention layers, as the model server allocates its cache: an MTP (`nextn_predict_layers`) block at the end of the file keeps no KV cache (pinned llama.cpp: the caches take `il < n_layer()`, `n_layer() = block_count - nextn_predict_layers`).
+- **Who changes:** only profiles whose need is estimated (not measured, not written), on a file with an MTP block that the rule before counted as an attention layer: a plain (all-attention) architecture with `nextn_predict_layers`, or a hybrid whose MTP block falls on its full-attention interval. Qwen 3.5 4B (33 blocks) and Qwen 3.8 27B (65 blocks), interval 4, do not: their MTP block was never counted. Their estimates are unchanged.
+- **Going back:** the image before counts the block again; nothing stored changes.
+
+## Web UI: the benchmark pages and "Remove for good" in the trash
+
+No schema change, no setting. One new read route and one new field:
+
+- **`GET /api/bench/results/models`** (`?ctx=`, `?run=` a run id or number, permission **observe**; the answer also lists `contexts`, the contexts the record holds figures at): per model file, each figure from the newest finished step that measured it (`cold_load_s` with `cold` and `cold_verified`, `reload_s`, `decode_tps`, `ttft_ms`, `memory_mib`, `lowest_available_mib`: the lowest available system memory of the machines the step used, with `lowest_available_node`), the newest step per zone count (`by_nodes`) and `smallest_fit` (the fewest zones a load of the file completed on, in any run). Read from the steps and the measurement record; nothing stored. A figure the step did not measure is left out. Each figure's step is in `from` (`run_id`, `run_number`, `step`, `at`, `node_count`) and `mixed` says a cell's figures come from more than one run; the page marks such a row "several runs". `file_gone` marks a model file no longer in the models folder (with `trash_id` when it is in Deleted models); such rows come last. The Overview's "Latest result for each model" and the Runs page's views Load times, Generation speed, First token and Memory draw it.
+- **Steps: `reason_short`**, a refusal in a few words ("Does not fit on 1 zone") beside the scheduler's sentence in `reason`; computed when read, nothing stored.
+- **Groups list: `task_count`**, the coding tasks a run of the group sends (its tasks phases' stored or inline task sets), when it has any.
+
+- **Benchmarks.** The new pages of the boards: the Overview, the groups and benchmarks (a group's panel beside the list), the runs (views, filters, pages of 12), a run's panel and a benchmark's report. The report's four headline figures come from the step's phases. What the server does not serve yet is drawn greyed with the missing thing and its slice on hover (the Coding figures, "smallest that fits", the group option "cold loads", Compare, drop-out notes, one-click PDF, the editors, run control). The menu: Overview, Benchmarks, Runs, Settings.
+- **Classic benchmark pages dropped.** Their routes and data stay; these lose their page: `GET /api/bench/trends`, `GET /api/bench/aggregates` (still read by the Models pass rates), `/api/bench/external*`, `GET /api/bench/benchmarks/{id}/results`, `GET /api/bench/runs/{id}/export`, `GET /api/bench/schema`, `GET /api/bench/profiles`, the benchmark and suite writes (`POST`/`PUT`/`DELETE /api/bench/benchmarks*`, `/api/bench/suites*`), `POST /api/bench/suites/{id}/run`, `POST /api/bench/benchmarks/{id}/run`, `POST /api/bench/runs/{id}/cancel`. A group can still be duplicated and a run pinned from the pages.
+- **Trash.** Each deleted model says "Kept until <date>"; while purge is off the page says nothing is removed automatically. "Remove for good" in an item's panel: the dry run first and the server's own sentence, the file name typed exactly and a comment, then the remove; every refusal (read-only, not a plain file, ...) in the server's words. "Removed for good" under the trash lists the files removed (when, by whom, why).
+
+## Scheduler image: benchmark run facts and run numbers (benchmarks slice 2)
+
+No agent change, no new port, no schema change, no new route, no new setting. Every new field is computed when it is read; nothing is stored.
+
+- **Run rows.** `GET /api/bench/runs` takes `offset` and `result` (running, queued, waiting, passed, with_issues, failed, refused, cancelled, skipped; has_failed, has_refused, clean) and answers `total` and `offset`. Each run (also `last_run` on the groups list and `GET /api/bench/runs/{id}`) carries `number`, `result`, `counts` {steps, done, to_go, completed, passed, with_issues, failed, refused, cancelled, skipped}, `cold` {loads, cold, verified, state} and, for a direct run, `inputs`. Passed means every step completed with no issue (a failed request, turn, concurrent request or task, a failed phase, or an expectation not met).
+- **Run numbers.** A run's number is its place in queue order (`queued_at`, then id; oldest 1) over the run rows and the `run_removals` log together: a trim, a restart and new runs do not move any number, and a run whose row were removed (no code does this; a remove must log the run as a trim does) keeps its number and moves no other. `GET /api/bench/runs/{id}` takes a number for `{id}`; `?requests=0` leaves out the request rows. Each step carries `slug`, its entry address (model name and placement; the step index is added only when two entries share a slug).
+- **Lists.** `GET /api/bench/benchmarks` rows carry `last_use` (by id or as a recipe); groups carry `expanded_count`. The progress document (`/ws` and `GET /api/bench/state`) carries `current.placement` and `counts`.
+- **Behaviour change for keys: pinning a run takes the permission `models`** (it was `settings`), as a model pin does. A key with only `settings` is now refused 403 on `PUT`/`DELETE /api/bench/runs/{id}/pin`.
+- **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
+- **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
+
+## Scheduler image: Gemma 4's restore-point size shown as a proven bound
+
+No agent change, no new port, no new route, no table, no setting. Plans change only where `count_host_memory` is on (default off) for a gemma4 profile hosted on a node.
+
+- **Gemma 4 (architecture gemma4):** one context checkpoint is at most the window's cells times the window layers' K+V, from the header: Gemma 4 12B is 320.00 MiB at f16 (170.00 MiB at q8_0), within 0.01% of the server's own log line (320.013 MiB at every context from 2,048 to 131,072). The Models panel says "at most 320 MB each, up to 32 (10,240 MB)"; the plan note counts it as "up to". A gemma4 header without the window pattern, and every other window architecture, still shows "size not yet known: read at the first load".
+- **The log check for a window model** compares the largest checkpoint created with the bound: smaller is normal (a conversation shorter than the window), more than 1% above is a WARN `learnedNeed` event.
+- **Every machine that holds host memory:** `/api/status` `server_host_memory` and `/api/system` `host_memory` gain `scope`, "on the scheduler's machine only", and both gain `node_host_memory`: per console that hosts a loaded model, its checkpoints, prompt cache, instances and note ("at least" when a size is unknown). New fields only.
+- **Wording:** the model removal sentences say "its 1 profile", not "its 1 profiles".
+- **Going back:** the image before shows Gemma 4 as "size not yet known: read at the first load"; nothing stored changes.
+
+## Agent release: children start without `LLAMA_ARG_*`
+
+Agent only; the scheduler image below ships with or without it (the scheduler never starts a process through the agent's runners).
+
+- **The agent's children start without any `LLAMA_ARG_*` variable**, any case, as the scheduler's own children do. Before, the child runner passed the agent's whole environment, and both runners passed the launch's own `Env`. A `LLAMA_ARG_*` there would silently override the command line the scheduler built (`--ctx-checkpoints`, `--cache-ram`). The systemd runner passes the launch's `Env` without them; systemd-run never gives a unit the agent's own environment.
+- **Going back.** The agent before passes them again: check a node's environment for `LLAMA_ARG_*` before rolling back.
+
+## Scheduler image: host memory made explicit (checkpoints and prompt cache)
+
+No agent change needed, no new port, no new route, no table. Three new settings and no plan change by default. See the runbook, "The host process's own memory".
+
+- **New settings** in the existing settings document: `node_host_cache_ram_mib` (0), `ctx_checkpoints` (32) and `count_host_memory` (off). `cache_ram_mib` (2048) is unchanged.
+- **Explicit arguments.** Both launch paths pass `--cache-ram` and `--ctx-checkpoints`. The command lines are those of the image before, plus `--ctx-checkpoints 32` after `--cache-ram`. That is the model server's own default, so nothing it does changes.
+- **A managed flag.** `--ctx-checkpoints`, `-ctxcp` and `--swa-checkpoints` in `extra_args` are refused on a write. A stored profile that already has one still loads, with a WARN at start; each launch drops it and logs one WARN line naming the profile, the flag and value dropped and the value used, and the instance's status carries it as `launch_note`.
+- **The term.** Plans, profiles and the catalog show `host_memory`. `/api/status` shows `server_host_memory` and `/api/system` shows `host_memory`. A host on a node counts it only with `count_host_memory` on. A WARN `learnedNeed` event appears when the logged size is more than 1% from the formula. Only the qwen35 architecture has an exact rule (proven against the server's log); every windowed model (Gemma 4 included) and any other architecture shows "size not yet known: read at the first load", with no number and 0 in the term, until a load logs one; a plan note or status sum with such a model says "at least", with the checkpoints NOT included, never "up to". That figure holds for that file version and context only, says which, and is kept in memory until a restart.
+- **Peak cycles.** A `GET /api/needs` `peak_cycles` row whose shape no profile has now is kept, with `no_profile: true` and the note "no profile has this shape now".
+- **Going back.** The image before ignores the three settings and refuses no flag. Its launches pass no `--ctx-checkpoints`, which is the same 32.
+
+## Scheduler image: the fill's stop check uses the measured growth
+
+No agent change, no schema, no new route, no new setting.
+- **Plans.** `POST /api/plan` answers `growth_history` (`kib_per_token`, `readings`, `capped_skipped`: the highest stored growth per token of the planned shape) and `fill_reserve_kib_per_token`.
+- **Context fill.** Before a turn the stop check assumes the highest stored reading for the shape, 12 KiB per token with none, never less than `fill_reserve_kib_per_token` (it was a fixed 8). The fill result says which figure and why (`growth_floor_kib_per_token`, `growth_floor_basis`), as does a refusal. `reasoning_chars` and `recall_note` are always written (0 and "" when there is nothing).
+- **Going back.** Nothing is stored. A fill run against the image before gets no `growth_history` and uses 12 KiB per token, saying so.
+
+## Scheduler image: the real context
+
+No agent change, no new port, no schema change, no new route. One new optional profile field, `ctx_above_trained`. Plan rows change for profiles whose ctx is above their model's trained context; see below.
+
+The model server caps every slot at the model's trained context (`<arch>.context_length` in the GGUF), and says so only in its log. This is stock llama.cpp: `tools/server/server-context.cpp` `n_ctx_slot()`. A profile with ctx 8,192 on a model trained at 2,048 was planned and reserved for 8,192, but the server ran it at 2,048. A request above that was answered 400 "exceeds the available context size".
+
+- **Planned at the trained context.** Such a profile is now planned, reserved and launched at the trained context. Its plan gains `ctx` and `ctx_note`: "ctx 8,192 is above this model's trained context of 2,048; the server runs it at 2,048". The configuration document keeps the ctx it was given.
+- **Refused on a write.** A configuration write that sets a ctx above the trained context is refused, unless the profile says `ctx_above_trained: true`. A stored profile that keeps its model and ctx still loads and can be edited, the same way a missing model file is kept.
+  - With `ctx_above_trained`, the profile is planned and launched at its ctx, with `--override-kv <arch>.context_length=int:<ctx>`. That lifts the server's cap. Answers past the trained context may be poor.
+- **The server's own context, after every load.** The scheduler reads `/props` (`default_generation_settings.n_ctx`) once the load is ready. `/api/status` instances gain:
+  - `ctx`: what was planned;
+  - `ctx_served`: the server's figure;
+  - `ctx_note`.
+
+  A figure other than the planned one is a warn history event, `contextMismatch`. The instance and the plan then say "runs at 2,048, profile says 8,192". The server pads slots to 256 tokens, so a figure within that is not counted as different. The request log's `ctx` is the instance's real figure. When `/props` cannot be read, the load still succeeds and the instance says "context not confirmed: ...".
+- **Context fill.** Before its first turn, a `context_fill` phase reads `ctx_served`. If it is below the plan's ctx, the phase refuses before any request is sent. The result gains `ctx_served` and `ctx_note`. A machine with no sample time now says `no_sample_time` ("no sample time" in the report), not `stale`.
+- **Test tools.** fakellama gains `FAKELLAMA_TRAINED_CTX`, which caps `/props` like the real server; `--override-kv` lifts the cap.
+- **Going back.** An older image keeps the plan at the configured ctx. If a stored profile sets `ctx_above_trained`, the older image reads the stored configuration with that field ignored: it is listed as unknown (`internal/cfgsvc/service.go`), and configuration writes are refused unless forced. Remove the field before going back if writes must work.
+
+## Scheduler image: a run-scoped instance counts only for itself
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **Status.** A run-scoped instance carries `production` and `scope`; any other instance has neither.
+- **Catalog and Models page.** `GET /api/models` lists a scoped instance among its model's `instances` with `scope` and `production`; the model's `state` is production's own (a test run alone leaves it `not_loaded`). The row says "test run e2 on ps5-03" apart from "in use on"; the panel's Loaded now marks it "Test run e2"; the Loaded filter still shows the model.
+- **Needs.** A measurement made by a scoped load stays under its own shape's key and is never the source of a derived need or a model's own line (before, a production profile with no measurement of its own could derive its plan from it). `/api/needs` learned rows and `peak_cycles` rows gain `scopes`. The learnedNeed sentence says "run-scoped load e2 of <id>".
+- **Going back.** Nothing is stored new. The image before ignores the new fields and counts a scoped instance in its model's state again.
+
+## Scheduler image: the TEST / PRODUCTION marking, read only (profiles slice B1)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
+
+- **Two optional profile fields are read.** `stage` (`test` or `production`) and `display_name` (one line, at most 80 characters, not starting with "TEST - ", not another profile's id, alias or display name). Both are in the configuration schema. Neither changes scheduling: a loaded instance is not stale when only they change.
+- **The effective stage.** `/api/profiles` and the configurations of `/api/models` carry `stage` (the effective one), `stage_set` (false: the rule decided) and `shown_name`, plus `display_name` when set. Absent, the rule decides: a generated profile (the `generated` field, else a `bench-`, `b-` or `m-` id) or one with `force_nodes` is test, any other production. An explicit stage always wins. The shown name is the display name or the id, with "TEST - " before it for a test profile.
+- **Read only in this image.** A profile write (`POST`/`PUT /api/config/profiles`, the MCP profile tools) that leaves both fields out keeps the stored ones. One that sets them to other values is refused 400. A whole-document import keeps them as written.
+- **`@` is refused in profile ids and aliases.** It is kept for run-scoped names (`<id>@<scope>`). A configuration that already holds one does not load: check before deploying.
+- **Going back.** This image writes neither field. A document a later image marked is read by the image before leniently: it refuses configuration writes until forced, and a forced write drops the marks. The rule gives the same split without them.
+
+## Scheduler image: run-scoped profiles (profiles slice A)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes while no scoped profile is held.
+
+- **A production profile with a run's settings, under its own name.** `POST /api/load` and `POST /api/plan` take `scope` and the run's settings (`ctx`, `parallel`, `kv_quant`, `flash_attn`, `host`, `thinking`) beside `nodes`: the load runs as `<production id>@<scope>`, held in memory only, never written to the configuration. It has its own instance, queue entry and back-off, so it runs beside production traffic and neither is admitted to the other's instance. It lives while its entry or instance does. See the runbook, "A run-scoped load".
+- **What is recorded.** History events and request log rows name the production id; events carry `data.scope`, rows keep the scoped name as `requested`.
+- **Going back.** Nothing is stored. The image before answers a scoped name 404 `model_not_found` and ignores `scope` in a load body (it loads the production profile): a caller checks for `scope` in the answer.
+
+## Scheduler image: context fill reads fresh samples and holds for the settle use
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan row changes.
+
+- **Fresh samples.** A `context_fill` mark's "after" reading is now a memory report certainly read after the turn ended. A report's time in the status is when the scheduler received it; the agent read the figure a moment before, when it built the heartbeat. An agent sends its next heartbeat only after the scheduler answered the last one, so a report counts only when the report before it was also received after the turn's end (less a GPU figure's exporter age). The phase waits up to three report intervals (heartbeats, 2 s each) for one. Before, a short turn could read the same report as "before", and growth showed 0. Each machine's reading at a mark gains:
+  - `after_sampled_at` and `before_sampled_at`: when the scheduler received the report;
+  - `after_read_after` and `before_read_after`: the figure was certainly read after this time;
+  - `after_wait_ms`: how long the mark waited after the turn's end;
+  - `samples_during_turn`: how many reports were read inside the turn;
+  - `stale` and `stale_reason`: no fresh report came in time, so growth and KiB per token are not given and no row is written.
+
+  `lowest_mib` counts only reports taken inside the turn, and is absent when there were none. Each mark gains `turn_started_at` and `turn_ended_at`.
+- **The settle hold.** After the load, a `context_fill` phase waits one `free_average_window` (new option `settle_s` overrides it; 0: none) before the first turn. The cycle then has a settle use, and `growth_readings` can be worked out for it. The result gains `settle_hold_ms` and `settle_held_ms`. A run takes about 30 s longer, plus up to three report intervals per mark.
+- **Status.** The benchmark runner reads each agent's `last_seen_ago_s` from `GET /api/status` to know when a report was received (the status's `time` less that age).
+- **Test tools.** In potluck-fake-agents' `--mem-file`, a key `silent:<id or name>` with N withholds that agent's reports for N s (at most 8); the file is read every 100 ms, the silence is checked before every send, and the agent reports at once when it ends.
+- **Going back.** The image before reads benchmark definitions strictly (unknown fields refused), so a benchmark that sets `settle_s` must drop it before going back; benchmarks without it are unchanged. Results stored by this image keep their new fields; the image before leaves them unread.
+
+## Scheduler image: remove a deleted model for good, and the timed clearing (models slice 4)
+
+No agent change, no new port. **Schema: one new table, `model_trash_removed` (tombstones), as step 3 of the `model_migrations` ledger; `model_trash` gains the state value `removing`.** `cfg_migrations` does not move. **The first code that erases a model file.** It acts only on a models folder mounted read-write (live's scheduler mount is read-write since 25 Nov 2026, with the owner's approval); on a read-only folder every removal answers "the models folder is read-only here" and the clearing does nothing.
+
+- **Remove for good.** `POST /api/models/trash/{id}/remove` {comment, dry_run} (permission **models**): erases `<models>/.trash/<id>/<file>`, only for an item in the trash whose file is the plain file of the recorded size; `dry_run` answers the size freed, the profiles, how many days early, `cannot_undo`, `read_only`. Interrupted items, items under way, missing, changed or non-regular files are refused with nothing changed.
+- **The only file removal.** `internal/modelfiles` `RemoveTrashed` builds the path from a checked id and name, checks `.trash` and `.trash/<id>` are plain directories and the file a regular file of the recorded size, checks the folder is writable with access(2) (writing nothing), and on Linux unlinks by descriptor (directories opened without following links, the file re-checked by inode). No other file is ever removed; there is no RemoveAll.
+- **A profile that still names the trashed file.** A profile stored before the model path rule may name `.trash/<id>/...`, or a link may resolve to the trashed file: the removal and the clearing refuse with 409 `in_use_by_profile`, naming the profiles. Slice 3's delete also counts a profile that reaches the file by a link or another path as using it.
+- **Tombstones.** `GET /api/models/trash` lists them apart in `removed`. The saved profile specs are dropped (the configuration history has them); the ids are kept.
+- **Timed clearing.** Setting `model_trash_purge` (default **false**, section retention): at start and hourly, up to 3 due files a pass; history `modelRemoved`, audit signed `potluck`. `purge_on` and `trash_purge_on` follow the setting. A file's clearing date is the later of the date it was given and its deletion plus `model_trash_days` now: lowering the setting never clears a file sooner.
+- **Crash safety.** Record `removing` and tombstone first, then the unlink, then the record goes; the next start completes or undoes a cut removal and never erases a file itself.
+- **MCP.** `remove_deleted_model` (destructive, owner-asked wording); `list_deleted_models` shows tombstones in `removed`.
+- **Going back.** The image before (af916f4) opens the same database and leaves step 3 alone. Its trash list reads `model_trash` only, so a removed file never shows there again; an item whose removal was cut by a kill shows as `removing`, which it does not restore or remove; it settles with this image. If `model_trash_purge` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped (as with `model_trash_days` for the image before slice 3).
+
+## Scheduler image: the context_fill benchmark phase; growth per token, collected only
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan row changes: nothing reads the new figures for a plan.
+
+- **New phase type `context_fill`** (benchmarks). Fills the loaded model's context to `fill_pct` (default 90 %) in one turn per mark (`marks_pct`, default 25, 50, 75, then `fill_pct`) with seeded filler counted by the model's own tokenizer (`POST /upstream/<profile>/tokenize`), reads every machine's available memory before the first turn and after each, and asks back `recall` planted facts (default 8) at the end. Options `seed`, `max_tokens` (the last answer, default 128), `stop_available_mib` (default 2,000) and `refuse_shared_shape` (default true). The phase result has `fill` (per mark: tokens held, prefill, per machine before, after, lowest, growth and KiB per token; recall; why it stopped); new metrics `fill_tokens`, `fill_growth_mib`, `fill_kib_per_token`, `recall_correct`; the Markdown report has a table per mark and machine; the transcript keeps the filler as its seed, size and sha256. Template `context-fill-recipe`.
+- **The stop line.** Before a turn, a machine that would fall below `stop_available_mib` with the turn's expected growth stops the step; during a turn, a sample below it cuts the turn off. The step fails with the reason and the model is unloaded; the run goes on unless `stop_on_failure`.
+- **The shape check.** `POST /api/plan` now also answers `ctx`, `parallel` and `shape_shared_with` (the other profiles of the same shape, each with `generated`). `POST /api/plan` also answers `generated` for the profile itself. A `context_fill` step is refused before anything loads when a profile a person wrote shares its shape, or when the scheduler does not say, because its memory peak becomes that shape's stored peak. It is always refused (whatever `refuse_shared_shape` says) when its own profile is a written one, as a fixed `profile` can be, or when the plan does not say `generated`; the reason says to use the recipe `context-fill-recipe`.
+- **Settle use on every unload event.** Each `cycle_peaks` entry gains `settle_use_mib`: what the node gave up one `free_average_window` after ready, taken once, null with `no_settle` when the cycle ended before, the free figure was moving (128 MiB) or there was no reading. The event also carries `profile_kind`, `profile_ctx`, `profile_parallel`.
+- **Growth readings.** `GET /api/needs` `peak_cycles` rows gain `growth_readings` (the latest 16 cycles, newest first): per node `growth_mib` (peak less settle use), `kib_per_token` over the most tokens one request of the cycle's load session held (its whole prompt, reused tokens included, plus its answer: `tokens_in + tokens_out`; read once from the request log, 10 s after the unload), `tokens`, `ctx_share`, `capped` (over 1,024 KiB per token). Only for llama profiles with tokens at least a quarter of ctx × parallel; parallel > 1 is "not computed" in this first cut; a trimmed log says "tokens unknown"; an unload event from before the profile's kind was stored says "not computed: recorded before the profile's kind was stored" (it is not counted as a non-llama profile).
+- **Test tools.** fakellama answers `/tokenize`, and with `FAKELLAMA_COUNT_PROMPT` counts chat prompts by characters; `potluck-fake-agents --mem-file FILE` lets a node report a scripted MemAvailable.
+- **Going back.** The image before ignores the new event fields and a stored benchmark with a `context_fill` phase fails validation there (unknown phase type); runs already stored keep their `fill` result as plain JSON.
+
+## Scheduler image: a request cut by a forced unload is told why
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **503 unloaded, not 502.** A request in flight whose model is force unloaded used to get 502 "upstream request failed: EOF". The cases are POST /api/unload with force, the models page's force unload, a zone's or node's force unload, and a model delete with interrupt. It now gets 503 with reason `unloaded`, `Retry-After`, and the message "unloaded: <profile> was unloaded". A delete with interrupt adds ": its model file is being deleted"; a node's force unload adds ": force unload of node <id>". This is the shape a loading or queued caller already gets. The scheduler marks the instance before it kills it, and the proxy reads that mark when the model server's connection breaks; it never guesses from the error text.
+- **A stream already under way** keeps its 200. It ends with a final SSE event, `event: error`, whose data is `{"error":{"message","type","code":503,"reason":"unloaded"}}`, then closes cleanly. This is the same form as the stall timeout's error event. A body that is not an event stream and was cut after its first byte is cut as before.
+- **A model server that fails on its own** still answers 502 "upstream request failed", as before.
+- The request log's reason for such a request is `unloaded`, "it was unloaded while it ran (a forced unload)".
+
+## Scheduler image and agent: one rule for a profile's model path
+
+No new port, no schema change, no new route, no new setting. No live profile is touched: every live profile names a plain file (checked 25 Nov 2026).
+
+- **The rule.** A kind: llama profile's `model` is a path relative to `models_dir`, with forward slashes, and no part that starts with a dot. Refused: `.trash/...`, `.incoming/...`, `.potluck-uploads/...` or any other dot-part, an absolute path, a `..` part, a backslash, a drive (`C:`), a NUL byte, an empty part. A plain sub-folder (`sub/a.gguf`) stays allowed. The refusal is a configuration validation error on field `model`, whether or not a file is at that path.
+- **One function, used everywhere a model path is joined to the models folder** (`internal/modelpath`): the configuration check, the scheduler's need and header reads, the llama-server command, the catalog's list of named files (a refused path is listed as not there and never read; the folder scan also skips dot-names), the file-cache evict (also refuses a link that resolves into a dot-folder; `sub/../m.gguf` is now refused) and the agent's host launch (400 `invalid_request`).
+- **A stored profile that already names such a path** is treated as a profile whose file went missing: the scheduler starts with the stored configuration (one WARN), the profile stays, an edit that keeps its path passes, its load is refused at plan time; a write that adds a profile for such a path or points one at it is refused. Older revisions are still shown.
+- **Going back.** The image before accepts these paths again; nothing is stored differently.
+
+## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **A newer image's bench migration no longer takes the scheduler down.** When the database's bench `migrations` ledger is ahead of this image (and only then), the scheduler starts as usual and only the benchmarks are off: every `/api/bench/...` route, the report pages and the MCP bench tools answer `503` with "benchmarks are off: this database's benchmark tables are at version N, this version knows up to M; start a version that knows N or newer" (body also `enabled: false`, `reason`), `GET /api/health` has a Benchmarks row in attention, `GET /api/system` has `bench.enabled: false` and `bench.off_reason`, one WARN at start. Nothing is written to the bench tables in that state. The configuration ledger ahead, a damaged file or any other failure to open: unhealthy as before.
+- **The run limit defaults to 720 minutes** (`bench_max_run_minutes`, was 240): a Full pass takes 6 to 7 hours. A stored setting is kept.
+- **Going back.** The image before still serves the whole scheduler unhealthy on a newer bench ledger; this image adds no bench migration.
+
+## Scheduler image: every cycle's peak, collected only
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
+
+- **The unload event carries the cycle's peaks.** Every `instanceUnloaded` event (unload, ttl, eviction, shutdown, failure) carries `shape`, `ended_normally` and `cycle_peaks`: per node of the placement `node_id`, `node`, `peak_mib` (null, with `no_peak` saying why, when the node had no free-memory reading in the cycle), and the plan's `share_mib`, `reserved_mib` and `basis` for that node when the load started. Peaks are tracked with the fill reserve off too; they are still stored and used only with it on.
+- **How many profiles have enough peaks.** `GET /api/needs` carries `peak_cycles`: a row per shape and node set with `cycles` (a peak on every node), `normal_cycles`, `cycles_without_peak`, `total` and per-node `nodes` (`low_mib`, `high_mib`, `latest_mib`), `first_at`, `last_at`, `profiles`; and `totals` (`rows`, `at_least_1`, `at_least_3`, `at_least_5`). A tally kept in memory: rebuilt from the history store at start, then counted as unload events are recorded; `/api/needs` never reads the history files.
+- **Going back.** The image before reads the same history files: the new fields are plain event data it shows and ignores.
+
+## Scheduler image: delete a model to the trash, and restore it (models slice 3)
+
+No agent change, no new port. **Schema: one new table, `model_trash`, as step 2 of the `model_migrations` ledger.** `cfg_migrations` does not move. **Needs the scheduler's models mount read-write to act; not applied: until the owner agrees, it stays `:ro` and the routes refuse with "the models folder is read-only here".**
+
+- **Delete.** `POST /api/models/delete/{file}` {comment, dry_run} (permission **models**): renames the file into `<models>/.trash/<id>/` and takes every profile that names it out of the configuration in one revision; refused while it is loaded, loading or queued, while a benchmark run touches it, for a link, and on a read-only folder.
+- **Delete with interrupt.** `"interrupt": true` force unloads the file's instances (the existing forced unload), answers its queued requests 503 `unloaded` (a new scheduler step used only here), waits up to 5 s, then deletes; the answer says what it cut (`interrupted`). Without it the delete refuses as before. A benchmark run still refuses. MCP `delete_model` takes `interrupt`.
+- **Trash list.** `GET /api/models/trash` (**observe**): items with `file`, `size_bytes`, `deleted_at`, `purge_at`, `state`, the saved profiles, `actor`, `comment`, `problem`; `total_bytes`, `next_purge_at`, `trash_days`, `purge_on` (false: nothing removes files yet).
+- **Restore.** `POST /api/models/trash/{id}/restore` {comment, rename_taken} (**models**): renames the file back and adds its profiles in one revision.
+- **Catalog.** `disk` gains `trash_bytes`, `trash_count`, `next_purge_at`, `trash_purge_on`. Trashed files are not listed.
+- **Setting** `model_trash_days` (1 to 365, default 30; settings section retention).
+- **Configuration.** A write or rollback that adds a profile on a trashed file is refused with "it is in the trash since ...".
+- **Crash safety.** A kill between any two steps is repaired or reported at the next start.
+- **MCP.** `delete_model`, `list_deleted_models`, `restore_model`.
+- **Going back.** The image before (b162acd) opens the same database and ignores `model_trash`. It never lists a file in `.trash/` (its catalog reads only the top of the models folder) and never removes one. Profiles taken out by a delete stay out there; restore them with this image. If `model_trash_days` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped.
+
+## Scheduler image: a plan says when an unpause is only pending
+
+No agent change, no new port, no schema change.
+
+- **"Starts within about 2 s".** A plan (and a queued entry's reason) that waits only because a node it needs was unpaused and its agent has not heard it yet says "unpause pending: it was unpaused and its agent is told with its next heartbeat, so the load starts within about 2 s", naming the node. The action stays `queue`; placement is unchanged.
+
+## Scheduler image: pinned models (models slice 2)
+
+No agent change, no new port. **Schema: one new table, `model_pins`, under a new ledger `model_migrations` (version 1).** `cfg_migrations` does not move.
+
+- **Pin a model.** `PUT /api/models/pin/{key}` pins a model by its catalog key (the file name, or `command:<profile id>`); `DELETE /api/models/pin/{key}` takes the pin off (404 when it was not pinned). Both need the permission **models**, a comment (body `{"comment": "..."}` or `X-Comment`), and write an audit entry in section models (target `pin:<key>`). Pinning a pinned model changes nothing and writes no entry (`changed: false`). A pin changes nothing in scheduling; pins are global.
+- **The catalog says so.** Every entry of `GET /api/models` carries `pinned` (true or false) and `pinned_at` (unix ms, or null).
+- **MCP.** `pin_model` and `unpin_model` (`file`, `comment`).
+- **Going back.** The image before opens the same database: it never reads `model_migrations` or `model_pins`, so it shows no pins. They are there again when this image comes back.
+
+## Scheduler image: models page read additions (models slice 1)
+
+Read-only fields; no agent change, no new port, no schema change, no new route.
+
+- **Unload when idle.** Each profile in `GET /api/profiles` and each profile row of `GET /api/models` carries `ttl_s`: the effective idle unload (the profile's `ttl`, else `defaults.ttl`) in seconds; 0 means never.
+- **Added.** Each model file in `GET /api/models` carries `added_at` (unix ms): the file's modification time on the models folder; null for a missing file or a command profile.
+- **Which machine the disk is.** The `disk` block of `GET /api/models` carries `host`: the scheduler's node name (`local_node`).
+- **Benchmarks of a model.** `GET /api/bench/runs?model=<file>` lists the runs with a step on that model file (a step recorded before steps carried their file matches by the profiles of that file now). The catalog entry's `bench.reports` counts that model's completed runs. MCP `list_runs` takes `model`.
+
+## Scheduler image: per-device readings only from a cold load
+
+No agent change, no new port, no schema change.
+
+- **A per-device overhead reading is taken only from a cold load** on that node: measured bytes sent there of at least half of what the log puts on its devices. A cached reload (the worker already held the tensors) gives no reading.
+- **Rows read from cached loads are dropped once at start**, decided from the event history, with a history line, also when the reading's profile is a generated benchmark profile no longer in the configuration. Each start writes a count line and a `learnedNeed` event with `device_rows_checked` and `device_rows_dropped`, also when none are dropped.
+- **No host or per-device reading from an unsettled base**: when an instance that ran left the node less than one `free_average_window` before the new one was created, the base free figure may still show it; that load gives no reading.
+
 ## Scheduler image: stable placement among equal consoles
 
 No agent change, no new port, no schema change.

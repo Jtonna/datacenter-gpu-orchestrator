@@ -142,6 +142,16 @@ type Profile struct {
 	ForceNodes  []string // llama: node ids or hostnames, in device order; skips the fit check
 	TensorSplit []int    // llama: explicit split, same length as ForceNodes
 	ExtraArgs   []string // llama: appended last to the command line
+	// CtxAboveTrained: the profile means a ctx above the model's trained
+	// context (<arch>.context_length). The model server caps every slot at
+	// the trained context unless told otherwise, so the scheduler then
+	// launches with --override-kv <arch>.context_length=int:<ctx>. Without
+	// it a ctx above the trained context is planned and launched at the
+	// trained context (CtxAsked keeps the configured one).
+	CtxAboveTrained bool
+	// CtxAsked is the configured ctx when the scheduler planned the profile
+	// at the model's trained context instead (0: as configured).
+	CtxAsked int
 
 	Cmd           string // command: command line containing ${PORT}
 	CheckEndpoint string // command: readiness path
@@ -172,6 +182,12 @@ type Profile struct {
 	// characters). It changes nothing in scheduling: a loaded instance is
 	// not stale when only its description changed.
 	Description string
+	// Stage is "test", "production" or "" (not said: the rule decides, see
+	// config.EffectiveStage). DisplayName is an optional name for people.
+	// Neither changes anything in scheduling: a loaded instance is not
+	// stale when only they changed.
+	Stage       string
+	DisplayName string
 }
 
 // HostNode is Profile.Host for a host on a node; HostServer is the profile

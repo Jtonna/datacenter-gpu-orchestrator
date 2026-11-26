@@ -9,6 +9,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 )
 
 // loopbackURL is where the benchmark runner reaches the scheduler's own API.
@@ -28,7 +29,7 @@ func loopbackURL(ln net.Addr) string {
 
 // benchmarksUsing lists the benchmarks that refer to a profile (for the delete warning).
 func benchmarksUsing(st *bench.Store, profile string) []string {
-	if st == nil {
+	if st == nil || st.BenchOff() != nil { // a newer version's bench tables are not read
 		return nil
 	}
 	bms, err := st.ListBenchmarks()
@@ -49,7 +50,7 @@ func benchmarksUsing(st *bench.Store, profile string) []string {
 // (nil, nil): its endpoints answer 503 and nothing else is affected.
 func openBench(svc *cfgsvc.Service, st *bench.Store, ln net.Listener, hist *history.Store, log *slog.Logger) (*bench.Store, *bench.Manager) {
 	cfg := svc.Config()
-	if !cfg.Bench.Enabled || st == nil {
+	if !cfg.Bench.Enabled || st == nil || st.BenchOff() != nil { // BenchOff: warned at start (main.go)
 		return nil, nil
 	}
 	o := bench.ManagerOptions{Store: st, API: &bench.HTTPAPI{Base: loopbackURL(ln.Addr())}, Version: version, Logger: log,
@@ -59,7 +60,11 @@ func openBench(svc *cfgsvc.Service, st *bench.Store, ln net.Listener, hist *hist
 		MaxRunSetting: func() time.Duration { return time.Duration(svc.Config().Bench.MaxRunMinutes) * time.Minute },
 		ProfileOK:     func(id string) bool { _, _, ok := svc.Config().Resolve(id); return ok },
 		// Read at every check, so a change of bench_retention_days applies without a restart.
-		Retention: func() time.Duration { return time.Duration(svc.Config().Bench.RetentionDays) * 24 * time.Hour }}
+		Retention: func() time.Duration { return time.Duration(svc.Config().Bench.RetentionDays) * 24 * time.Hour },
+		// A context_fill phase holds one free_average_window after the load (read when it starts),
+		// and waits for the agents' next report (their heartbeat) after each turn.
+		FillSettle:      func() time.Duration { return svc.Config().Defaults.FreeAverageWindow },
+		FillReportEvery: pool.HeartbeatEvery}
 	if hist.On() {
 		o.Record = hist.Record
 	}

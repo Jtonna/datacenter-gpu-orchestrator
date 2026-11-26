@@ -15,6 +15,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // DefaultDefaults returns the built-in policy defaults (design section 6).
@@ -31,6 +32,7 @@ func DefaultDefaults() Defaults {
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
 		HostOverheadMiB: 1024, PlacementToleranceMiB: 128,
+		NodeHostCacheRAMMiB: 0, CtxCheckpoints: 32, CountHostMemory: false,
 	}
 }
 
@@ -53,6 +55,12 @@ const (
 	DefaultUsageHourlyDays  = 396
 	// MaxUsageDays bounds both (a sanity limit on the file's size).
 	MaxUsageDays = 3660
+)
+
+// DefaultModelTrashDays and MaxModelTrashDays bound model_trash_days.
+const (
+	DefaultModelTrashDays = 30
+	MaxModelTrashDays     = 365
 )
 
 // DefaultLoopStepWarnMs is loop_step_warn_ms unless set; MaxLoopStepWarnMs
@@ -98,6 +106,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ChildLogKeep:      DefaultChildLogKeep,
 		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
 		UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LoopStepWarnMs: DefaultLoopStepWarnMs,
+		ModelTrashDays:  DefaultModelTrashDays,
 		DefaultUserName: DefaultDefaultUserName,
 		LocalProbeCmd:   DefaultLocalProbeCmd,
 		WSMaxClients:    DefaultWSMaxClients,
@@ -120,6 +129,8 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays, LoopStepWarnMs: raw.LoopStepWarnMs, ModelsDiskBudgetGB: raw.ModelsDiskBudgetGB,
+		ModelTrashDays:      raw.ModelTrashDays,
+		ModelTrashPurge:     raw.ModelTrashPurge,
 		RequestsLiveTimings: raw.RequestsLiveTimings,
 		DefaultUserName:     strings.TrimSpace(raw.DefaultUserName),
 		LocalProbeCmd:       raw.LocalProbeCmd,
@@ -166,6 +177,8 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
 	c.benchEnabledSet = raw.Bench.Enabled
 	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
+	c.modelNote, c.keepArgs = o.ModelNote, o.KeepArgs
+	c.trainedCtx, c.keepCtx = o.TrainedCtx, o.KeepCtx
 	if err := c.validate(rawProfiles, c.modelCheck(o, exists)); err != nil {
 		return nil, nil, nil, err
 	}
@@ -186,12 +199,19 @@ func trimAll(in []string) []string {
 // modelPath is where a profile's model file is expected.
 func (c *Config) modelPath(p *core.Profile) string { return filepath.Join(c.ModelsDir, p.Model) }
 
-// modelCheck reports whether a profile's model file may be accepted: it
-// exists, or the profile keeps the file it pointed at before (o.KeepModels).
+// modelCheck reports whether a profile's model file may be accepted: its
+// path keeps the path rule (internal/modelpath) and the file exists, or
+// the profile keeps the file it pointed at before (o.KeepModels).
 func (c *Config) modelCheck(o Options, exists func(string) bool) func(*core.Profile) bool {
 	return func(p *core.Profile) bool {
 		if m, ok := o.KeepModels[p.Name]; ok && m == p.Model {
-			return true
+			return true // kept, as a missing file is: also a path the rule refuses
+		}
+		if m, ok := o.KeepPaths[p.Name]; ok && m == p.Model {
+			return exists(c.modelPath(p)) // stored elsewhere: the path rule as for a stored profile; the file must be there
+		}
+		if modelpath.Check(p.Model) != nil {
+			return false // the path rule (internal/modelpath), whether the file exists or not
 		}
 		return exists(c.modelPath(p))
 	}
@@ -212,6 +232,8 @@ type rawConfig struct {
 	RequestsLiveTimings bool                        `yaml:"requests_live_timings" json:"requests_live_timings,omitempty"`
 	LoopStepWarnMs      int                         `yaml:"loop_step_warn_ms" json:"loop_step_warn_ms,omitempty"`
 	ModelsDiskBudgetGB  int                         `yaml:"models_disk_budget_gb" json:"models_disk_budget_gb,omitempty"`
+	ModelTrashDays      int                         `yaml:"model_trash_days" json:"model_trash_days,omitempty"`
+	ModelTrashPurge     bool                        `yaml:"model_trash_purge" json:"model_trash_purge,omitempty"`
 	DefaultUserName     string                      `yaml:"default_user_name" json:"default_user_name,omitempty"`
 	UIModelActions      *bool                       `yaml:"ui_model_actions" json:"-"` // retired (RetiredSettings): read from a file and ignored
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
@@ -260,27 +282,32 @@ type MatchSpec struct {
 
 // ProfileSpec uses pointers wherever "absent" must be told from zero.
 type ProfileSpec struct {
-	Kind             string    `yaml:"kind" json:"kind,omitempty"`
-	Model            string    `yaml:"model" json:"model,omitempty"`
-	Ctx              *int      `yaml:"ctx" json:"ctx,omitempty"`
-	Parallel         *int      `yaml:"parallel" json:"parallel,omitempty"`
-	KVQuant          string    `yaml:"kv_quant" json:"kv_quant,omitempty"`
-	FlashAttn        *bool     `yaml:"flash_attn" json:"flash_attn,omitempty"`
-	NeedsMiB         int       `yaml:"needs_mib" json:"needs_mib,omitempty"`
-	AllowTiers       []int     `yaml:"allow_tiers" json:"allow_tiers,omitempty"`
-	ForceNodes       []string  `yaml:"force_nodes" json:"force_nodes,omitempty"`
-	TensorSplit      []int     `yaml:"tensor_split" json:"tensor_split,omitempty"`
-	ExtraArgs        []string  `yaml:"extra_args" json:"extra_args,omitempty"`
-	Cmd              string    `yaml:"cmd" json:"cmd,omitempty"`
-	CheckEndpoint    string    `yaml:"check_endpoint" json:"check_endpoint,omitempty"`
-	Aliases          []string  `yaml:"aliases" json:"aliases,omitempty"`
-	Generated        *bool     `yaml:"generated" json:"generated,omitempty"`
+	Kind          string   `yaml:"kind" json:"kind,omitempty"`
+	Model         string   `yaml:"model" json:"model,omitempty"`
+	Ctx           *int     `yaml:"ctx" json:"ctx,omitempty"`
+	Parallel      *int     `yaml:"parallel" json:"parallel,omitempty"`
+	KVQuant       string   `yaml:"kv_quant" json:"kv_quant,omitempty"`
+	FlashAttn     *bool    `yaml:"flash_attn" json:"flash_attn,omitempty"`
+	NeedsMiB      int      `yaml:"needs_mib" json:"needs_mib,omitempty"`
+	AllowTiers    []int    `yaml:"allow_tiers" json:"allow_tiers,omitempty"`
+	ForceNodes    []string `yaml:"force_nodes" json:"force_nodes,omitempty"`
+	TensorSplit   []int    `yaml:"tensor_split" json:"tensor_split,omitempty"`
+	ExtraArgs     []string `yaml:"extra_args" json:"extra_args,omitempty"`
+	Cmd           string   `yaml:"cmd" json:"cmd,omitempty"`
+	CheckEndpoint string   `yaml:"check_endpoint" json:"check_endpoint,omitempty"`
+	Aliases       []string `yaml:"aliases" json:"aliases,omitempty"`
+	Generated     *bool    `yaml:"generated" json:"generated,omitempty"`
+	// CtxAboveTrained: the profile means a ctx above the model's trained
+	// context (written only when true; see core.Profile.CtxAboveTrained).
+	CtxAboveTrained  *bool     `yaml:"ctx_above_trained" json:"ctx_above_trained,omitempty"`
 	TTL              *duration `yaml:"ttl" json:"ttl,omitempty"`
 	LoadTimeout      duration  `yaml:"load_timeout" json:"load_timeout,omitempty"`
 	StallTimeout     *duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
 	LoadStallTimeout *duration `yaml:"load_stall_timeout" json:"load_stall_timeout,omitempty"`
 	Host             string    `yaml:"host" json:"host,omitempty"`
 	Description      string    `yaml:"description" json:"description,omitempty"`
+	Stage            string    `yaml:"stage" json:"stage,omitempty"`
+	DisplayName      string    `yaml:"display_name" json:"display_name,omitempty"`
 }
 
 func (r *ProfileSpec) toCore(name string) *core.Profile {
@@ -291,6 +318,7 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases, Generated: r.Generated,
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
 		LoadStallTimeout: r.LoadStallTimeout.ptr(), Description: r.Description,
+		Stage: r.Stage, DisplayName: r.DisplayName,
 	}
 	if r.Host == core.HostNode {
 		p.Host = core.HostNode // "" and "server": the scheduler's machine, as before
@@ -300,6 +328,9 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 	}
 	if r.Ctx != nil {
 		p.Ctx = *r.Ctx
+	}
+	if r.CtxAboveTrained != nil {
+		p.CtxAboveTrained = *r.CtxAboveTrained
 	}
 	if r.FlashAttn != nil {
 		p.FlashAttn = *r.FlashAttn
@@ -391,6 +422,9 @@ type rawDefaults struct {
 	HostNoMmap                bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
 	DeviceOverheadSettingOnly bool     `yaml:"device_overhead_setting_only" json:"device_overhead_setting_only,omitempty"`
 	PlacementToleranceMiB     int      `yaml:"placement_tolerance_mib" json:"placement_tolerance_mib,omitempty"`
+	NodeHostCacheRAMMiB       int      `yaml:"node_host_cache_ram_mib" json:"node_host_cache_ram_mib,omitempty"`
+	CtxCheckpoints            int      `yaml:"ctx_checkpoints" json:"ctx_checkpoints,omitempty"`
+	CountHostMemory           bool     `yaml:"count_host_memory" json:"count_host_memory,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -403,7 +437,8 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
 		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, d.MarginRefuses, duration(d.FreeAverageWindow),
-		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap, d.DeviceOverheadSettingOnly, d.PlacementToleranceMiB}
+		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap, d.DeviceOverheadSettingOnly, d.PlacementToleranceMiB,
+		d.NodeHostCacheRAMMiB, d.CtxCheckpoints, d.CountHostMemory}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -417,7 +452,8 @@ func (r rawDefaults) value() Defaults {
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
 		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, r.MarginRefuses, time.Duration(r.FreeAverageWindow),
-		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap, r.DeviceOverheadSettingOnly, r.PlacementToleranceMiB}
+		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap, r.DeviceOverheadSettingOnly, r.PlacementToleranceMiB,
+		r.NodeHostCacheRAMMiB, r.CtxCheckpoints, r.CountHostMemory}
 }
 
 type rawRecovery struct {

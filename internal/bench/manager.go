@@ -58,6 +58,18 @@ type ManagerOptions struct {
 	// the background (default 500 ms); a negative value turns the background
 	// sampling off (the step still samples at its load polls and phase ends).
 	MemSample time.Duration
+	// FillSettle is the scheduler's free_average_window, read when a
+	// context_fill phase starts: its hold after the load when the phase does
+	// not give settle_s (nil: 30 s, the scheduler's default).
+	// FillReportEvery is how often an agent reports its memory (the
+	// heartbeat; default 2 s): a mark waits up to three of these for a report
+	// certainly read after its turn's end.
+	// FillCtxWait is how long a context_fill phase waits, before its first
+	// turn, for the scheduler to read the server's own context (default
+	// 10 s: the read is one /props, at most 5 s, just after the load).
+	FillSettle      func() time.Duration
+	FillReportEvery time.Duration
+	FillCtxWait     time.Duration
 	// ColdRetry is how long a cold load keeps asking a node that is still
 	// stopping its launch or evicted a moment ago (default 20 s, negative:
 	// once); ColdSettle is the wait before the plan is read again after the
@@ -125,6 +137,10 @@ type Manager struct {
 
 // NewManager creates a manager and marks runs that an earlier process left
 // running as failed (interrupted).
+// DefaultMaxRun is the run limit when none is given: a Full pass takes 6 to
+// 7 hours (config.DefaultMaxRunMinutes is the same).
+const DefaultMaxRun = 720 * time.Minute
+
 func NewManager(o ManagerOptions) (*Manager, error) {
 	if o.Store == nil || o.API == nil {
 		return nil, errors.New("bench: Store and API are required")
@@ -144,6 +160,15 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	if o.MemSample == 0 {
 		o.MemSample = DefaultMemSample
 	}
+	if o.FillSettle == nil {
+		o.FillSettle = func() time.Duration { return DefaultFillSettle }
+	}
+	if o.FillReportEvery <= 0 {
+		o.FillReportEvery = DefaultFillReportEvery
+	}
+	if o.FillCtxWait <= 0 {
+		o.FillCtxWait = 10 * time.Second
+	}
 	if o.ColdRetry == 0 {
 		o.ColdRetry = DefaultColdRetry
 	}
@@ -157,7 +182,7 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 		o.GoneTimeout = 2 * time.Minute
 	}
 	if o.MaxRun <= 0 {
-		o.MaxRun = 240 * time.Minute
+		o.MaxRun = DefaultMaxRun
 	}
 	if o.RetentionEvery <= 0 {
 		o.RetentionEvery = DefaultRetentionEvery

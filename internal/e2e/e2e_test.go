@@ -445,7 +445,7 @@ func TestChildVerbosityFeedsMemoryAndStderrStaysQuiet(t *testing.T) {
 		t.Fatalf("chat: %d %s", status, body)
 	}
 	run := c.running()
-	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--cache-ram 2048 -lv 4 --rpc 192.0.2.2:50052 --device RPC0") {
+	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--cache-ram 2048 --ctx-checkpoints 32 -lv 4 --rpc 192.0.2.2:50052 --device RPC0") {
 		t.Fatalf("cmd = %v", run)
 	}
 	insts, _ := c.jsonGet("/api/status")["instances"].([]any)

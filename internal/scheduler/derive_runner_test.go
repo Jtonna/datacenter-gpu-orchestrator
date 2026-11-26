@@ -31,7 +31,7 @@ func TestDerivedNeed_ConfigWritesAgainstListings(t *testing.T) {
 	dir := t.TempDir()
 	const models = 12
 	for m := range models {
-		if err := ggufgen.Write(filepath.Join(dir, fmt.Sprintf("model%02d.gguf", m)), ggufgen.Spec{Blocks: 32, Embd: 4096, Heads: 32, HeadsKV: 8}); err != nil {
+		if err := ggufgen.Write(filepath.Join(dir, fmt.Sprintf("model%02d.gguf", m)), ggufgen.Spec{Blocks: 32, Embd: 4096, Heads: 32, HeadsKV: 8, Context: 131072}); err != nil {
 			t.Fatal(err)
 		}
 	}

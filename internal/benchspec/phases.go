@@ -12,13 +12,14 @@ const (
 	PhaseWarmup       = "warmup"
 	PhaseRequests     = "requests"
 	PhaseConversation = "conversation"
+	PhaseContextFill  = "context_fill"
 	PhaseHold         = "hold"
 	PhaseConcurrent   = "concurrent_requests"
 	PhaseUnload       = "unload"
 )
 
 // PhaseTypes lists the phase types in the order a UI should offer them.
-var PhaseTypes = []string{PhaseLoad, PhaseWarmup, PhaseRequests, PhaseConversation, PhaseHold, PhaseConcurrent, PhaseTasks, PhaseUnload}
+var PhaseTypes = []string{PhaseLoad, PhaseWarmup, PhaseRequests, PhaseConversation, PhaseContextFill, PhaseHold, PhaseConcurrent, PhaseTasks, PhaseUnload}
 
 // Limits and defaults of phases.
 const (
@@ -63,6 +64,19 @@ type Phase struct {
 	// conversation
 	System string `json:"system,omitempty" yaml:"system,omitempty"`
 	Turns  []Turn `json:"turns,omitempty" yaml:"turns,omitempty"`
+
+	// context_fill (contextfill.go): the share of the context to fill, the
+	// marks where a turn ends and a reading is taken, the facts asked back at
+	// the end, the memory stop line, and whether a shape shared with a
+	// profile a person wrote refuses the step. seed and max_tokens apply too.
+	FillPct           *int  `json:"fill_pct,omitempty" yaml:"fill_pct,omitempty"`
+	MarksPct          []int `json:"marks_pct,omitempty" yaml:"marks_pct,omitempty"`
+	Recall            *int  `json:"recall,omitempty" yaml:"recall,omitempty"`
+	StopAvailableMiB  *int  `json:"stop_available_mib,omitempty" yaml:"stop_available_mib,omitempty"`
+	RefuseSharedShape *bool `json:"refuse_shared_shape,omitempty" yaml:"refuse_shared_shape,omitempty"`
+	// SettleS is the hold after the load before the first turn (seconds; default
+	// the scheduler's free_average_window), so the cycle has a settle use.
+	SettleS *int `json:"settle_s,omitempty" yaml:"settle_s,omitempty"`
 
 	// hold
 	Seconds *int `json:"seconds,omitempty" yaml:"seconds,omitempty"`
@@ -258,6 +272,7 @@ var allowed = map[string][]string{
 	PhaseWarmup:       {"count", "request"},
 	PhaseRequests:     {"requests", "repeats", "max_tokens", "temperature", "seed", "cache_prompt", "stream"},
 	PhaseConversation: {"system", "turns", "max_tokens", "temperature", "seed", "cache_prompt", "stream"},
+	PhaseContextFill:  {"fill_pct", "marks_pct", "recall", "seed", "max_tokens", "stop_available_mib", "refuse_shared_shape", "settle_s"},
 	PhaseHold:         {"seconds", "request"},
 	PhaseConcurrent:   {"n", "request"},
 	PhaseTasks:        {"task_set", "task_set_version", "tasks", "timeout_s"},
@@ -290,6 +305,12 @@ func (p *Phase) setOptions() []string {
 	add(p.TaskSetVersion != 0, "task_set_version")
 	add(p.Tasks != nil, "tasks")
 	add(p.TimeoutS != nil, "timeout_s")
+	add(p.FillPct != nil, "fill_pct")
+	add(len(p.MarksPct) > 0, "marks_pct")
+	add(p.Recall != nil, "recall")
+	add(p.StopAvailableMiB != nil, "stop_available_mib")
+	add(p.RefuseSharedShape != nil, "refuse_shared_shape")
+	add(p.SettleS != nil, "settle_s")
 	return s
 }
 
@@ -438,6 +459,8 @@ func (b *Benchmark) validatePhases() []error {
 			reqNeeded()
 		case PhaseTasks:
 			b.validateTasksPhase(p, w)
+		case PhaseContextFill:
+			validateContextFill(p, w)
 		}
 	}
 	return errs

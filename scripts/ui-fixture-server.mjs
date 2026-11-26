@@ -7,7 +7,7 @@
 // artboard can be compared like for like. Node only, no dependencies.
 //
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
-//                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
+//                                           [--state normal|empty|off|loading] [--sequence] [--live-timings] [--wide-zones]
 //                                           [--health two|good|unknown] [--release 0.1.5]
 //                                           [--zones none|groups|live|one-group|fleet] [--uptime-partial]
 //                                           [--load start|reject|evict|loaded|unknown] [--drain eta|noeta] [--pinned]
@@ -32,9 +32,19 @@
 //   configuration pages' fixture (scripts/ui-fixture/config.mjs, profiles.mjs)
 //   any other /api/... answers 404 in the API's error shape; other writes 405.
 //
+// --stdset ready|long|nothing|error|refused: the "Make standard profiles" dialog's
+// answers (GET and POST /api/models/{file}/standard-set); POST
+// /api/config/profiles/{id}/promote and /demote answer a write;
+// GET /api/profiles/test the Test profiles page (profiles.mjs).
+//
 // --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
 // /api/models lists the profile fixture's model files. --named-only <zone>:
 // that zone is in no_auto_nodes (auto: false), drawn "Named only".
+// --tiers live|catchall (with --zones live): the Tiers and zones page's
+// states (scripts/ui-fixture/tiers.mjs): GET /api/config carries the tier
+// lists, GET /api/config/tiers adds tier_zones, the zones on GET /api/nodes
+// and /api/status agents carry tier / tier_reason as the server gives them,
+// and GET /api/nodes lists the local node.
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -49,7 +59,7 @@
 // three are null until the run ends and the table shows a dash.
 //
 // --health: what GET /api/health and the health topic answer (the Health
-// board's states): two (the default: Zones a problem, Runs needing
+// board's states): two (the default: Zones a problem, Requests needing
 // attention, as the mockup draws it), good (no issue), unknown (no status
 // read yet: Zones and Queue unknown, as is Alerts in every state).
 //
@@ -77,6 +87,9 @@
 // --no-host-uptime: no agent reports host_uptime_s (an older agent, a console
 // fed by the fleet console); otherwise every reachable agent does.
 //
+// --inst-detail (with --models): the loaded instance also reports its memory
+// per zone (load log), its last finished request and its device total.
+//
 // --pending: Create new zone (internal/api/pending.go). GET /api/zones/pending
 // lists the one pending zone zone-9 (rack-a) in that state, GET
 // /api/zones/pending/pz-0000000000000001 answers it (gone: 404, as after a
@@ -84,6 +97,18 @@
 // server's 400 sentence; taken: its 409), DELETE answers it cancelled. The
 // setting default_model_source reads share:192.0.2.10:/models (nosource:
 // empty). The command names Potluck as 192.0.2.1:8080. Nothing is kept.
+// --pending mixed: the list holds zone-9 waiting and zone-8
+// (pz-0000000000000002) cancelled, as the server keeps a cancelled zone
+// listed with its state until its expiry; each answers by its id.
+//
+// --wide-zones: the request list also holds rows served by one, three and
+// six machines (ids 190 to 192), for the Requests page's Zones column.
+//
+// --long-names: the request list (and Activity's recent requests) also holds
+// rows for live's longest Model cells (ids 186 to 184): a test profile whose
+// id is a generated benchmark profile's, a short test profile, and a
+// production profile whose model's short name is as long; /api/models names
+// their profiles and models. The cell must never widen its table.
 //
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
@@ -96,8 +121,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
-import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
-import { Keys } from './ui-fixture/keys.mjs';
+import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer, testProfiles, standardSet, standardWrite } from './ui-fixture/profiles.mjs';
+import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
+import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
+import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute, removeRoute } from './ui-fixture/trash.mjs';
+import { BENCH_STATES, benchRoute } from './ui-fixture/bench.mjs';
+import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -108,6 +137,22 @@ const HOST = opt('--host', '0.0.0.0');
 const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
 const LIVE_TIMINGS = argv.includes('--live-timings');
+const WIDE_ZONES = argv.includes('--wide-zones');
+const LONG_NAMES = argv.includes('--long-names');
+// live's longest Model cells (generic otherwise): profile id, stage, model file, short name
+const LONG = [
+  { id: 'bench-tinyllama-1-1b-chat-v1-0-q4-k-m-on-box-0a1b2c3d-2304', stage: 'test', file: 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf', short: 'tinyllama-1.1b-chat-v1.0', ctx: 2048 },
+  { id: 'p4-qwen4b-107', stage: 'test', file: 'Qwen3.5-4B-Q4_K_M.gguf', short: 'qwen3.5-4b', ctx: 2048 },
+  { id: 'qwen3-coder-30b-a3b-instruct:128k', stage: 'production', file: 'Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf', short: 'qwen3-coder-30b-a3b-instruct', ctx: 131072 },
+];
+// with --long-names the catalog also names the request list's own profiles, so they are not "no longer exists"
+const OWN = [{ id: 'gemma-4-27b:32k', file: 'gemma-4-27b-it-Q4_K_M.gguf', short: 'gemma-4-27b', ctx: 32768 }, { id: 'gemma-4-12b:64k', file: 'gemma-4-12b-it-Q4_K_M.gguf', short: 'gemma-4-12b', ctx: 65536 },
+  { id: 'qwen3-14b', file: 'Qwen3-14B-Q4_K_M.gguf', short: 'qwen3-14b', ctx: 16384 }].map(o => Object.assign({ stage: 'production' }, o));
+const longCatalog = () => LONG.concat(OWN).map(l => ({ key: l.file, kind: 'llama', file: l.file, exists: true, size_bytes: 2 ** 30, name: l.short, short_name: l.short, state: 'not_loaded', icon: null,
+  profiles: [{ id: l.id, ctx: l.ctx, stage: l.stage, shown_name: (l.stage === 'test' ? 'TEST - ' : '') + l.id }], profile_count: 1, generated_count: 0, startable_count: 1,
+  instances: [], measured: [], loads: { count: 0, recent: [] } }));
+// the scheduler's own machine hosting, one console holding the whole model (live's most common row)
+const WIDE_HOST = helper => [{ id: 'local', name: 'scheduler-host', role: 'host' }, { id: '02:00:00:00:00:0b', name: helper, role: 'helper', share: 1 }];
 const HEALTH = opt('--health', 'two');
 // --release: the scheduler's release the Scheduler row names (facts.release)
 const RELEASE = opt('--release', '0.1.5');
@@ -121,18 +166,31 @@ const PINNED = argv.includes('--pinned');
 const CONFIG = opt('--config', 'normal');
 // --catalog: GET /api/models answers the profile fixture's six model files (default: none)
 const CATALOG = argv.includes('--catalog');
+// --runs-named (with --catalog): the request rows name profiles of that catalog, one of them a test
+// profile and one a profile it no longer has (the Model column names the profile: core/ui.js runProfileCell)
+const RUNS_NAMED = argv.includes('--runs-named');
+const RUN_NAMES = { 'gemma-4-27b:32k': 'qwen3-14b-128k', 'gemma-4-12b:64k': 'p2-old-test' };
+const runNamed = rows => (RUNS_NAMED ? rows.map(r => (RUN_NAMES[r.profile] ? Object.assign({}, r, { profile: RUN_NAMES[r.profile], model_file: '', short_name: undefined }) : r)) : rows);
+// --stdset ready|long|nothing|error|refused: GET and POST /api/models/{file}/standard-set (profiles.mjs standardSet)
+const STDSET = opt('--stdset', 'ready');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');
+// --named-only-id <name>: that zone's ID (not its name) is added to no_auto_nodes (auto: false), as a stored id the Tiers page names
+const NAMED_ONLY_ID = opt('--named-only-id', '');
+// --loads: GET /api/history also holds two loadFinished events (a cached load that sent 414 kB, a full upload), for Activity's Loads
+const LOADS = argv.includes('--loads');
 // --no-host-uptime: no agent reports host_uptime_s (the zone panel leaves Uptime out)
 const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
+// --inst-detail: a loaded instance carries its memory per zone, the last finished request and its device total
+const INST_DETAIL = argv.includes('--inst-detail');
 // --pending: the Create new zone states (see the header)
 const PENDING = opt('--pending', '');
 const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
-const PZ_ID = 'pz-0000000000000001';
+const PZ_ID = 'pz-0000000000000001', PZ_ID2 = 'pz-0000000000000002';
 const PZ_TEXT = { waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled' };
-function pendingZone(state, b = {}) {
-  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + PZ_ID;
-  const z = { id: PZ_ID, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
+function pendingZone(state, b = {}, id = PZ_ID) {
+  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + id;
+  const z = { id, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
     state, state_text: PZ_TEXT[state], created_at: new Date(t - 4 * 60000).toISOString(), expires_at: new Date(t + 56 * 60000).toISOString(),
     command: "curl -sSL 'http://192.0.2.1:8080" + script + "' | sudo sh", script_path: script, download_path: script + '&download=1', download_name: 'potluck-zone-' + name + '.sh' };
   if (state === 'joined') Object.assign(z, { joined_node: '02:00:00:00:01:09', joined_at: new Date(t - 60000).toISOString() });
@@ -146,8 +204,12 @@ function pendingRoute(req, res, p) {
     json(res, 201, pendingZone('waiting', b));
   });
   if (p === '/api/zones/pending' && req.method === 'GET') {
-    const list = PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
+    const list = PENDING === 'mixed' ? [pendingZone('waiting'), pendingZone('cancelled', { name: 'zone-8' }, PZ_ID2)]
+      : PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
     return json(res, 200, { pending: list, default_model_source: PZ_SOURCE });
+  }
+  if (PENDING === 'mixed' && p === '/api/zones/pending/' + PZ_ID2) {
+    if (req.method === 'GET' || req.method === 'DELETE') return json(res, 200, pendingZone('cancelled', { name: 'zone-8' }, PZ_ID2));
   }
   if (p === '/api/zones/pending/' + PZ_ID) {
     if (PENDING === 'gone' || !PENDING) return json(res, 404, { error: { code: 404, message: 'no pending zone ' + PZ_ID, type: 'invalid_request_error' } });
@@ -160,7 +222,28 @@ function pendingRoute(req, res, p) {
 // (scripts/ui-fixture/keys.mjs; kept in memory, so the MCP pages can be driven end to end). Without it the old
 // names-only /api/agents answer stays.
 const KEYS_STATE = opt('--keys', '');
+// --models none|five|full|written: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
+// --trash <state>: the models trash (v65, models slice 3; scripts/ui-fixture/trash.mjs): GET /api/models/trash,
+// POST /api/models/delete/{file} (dry run, interrupt), POST /api/models/trash/{id}/restore, and the trash
+// figures in the catalog's disk block. It implies --models five. States: empty, two, in-use, run, read-only,
+// taken, incomplete, again, not-regular (trash.mjs says what each answers). Without it the catalog has no trash fields
+// (a server older than v65).
+const TRASH_STATE = opt('--trash', '');
+if (TRASH_STATE && !TRASH_STATES.includes(TRASH_STATE)) { console.error('--trash: one of ' + TRASH_STATES.join(', ')); process.exit(2); }
+const MODELS_STATE = opt('--models', TRASH_STATE ? 'five' : '');
+if (MODELS_STATE) seedPins();
+if (TRASH_STATE) seedTrash(TRASH_STATE);
+const writtenProfiles = doc => doc.models.filter(m => (m.profiles || []).some(x => x.needs_written)).flatMap(m => m.profiles.map(x => Object.assign({}, x,
+  { kind: m.kind === 'command' ? 'command' : 'llama', model: m.kind === 'command' ? '' : m.file, stage: 'production', stage_set: false, shown_name: x.id })));
+const catalogDoc = now => (TRASH_STATE ? withTrash(modelsDoc(MODELS_STATE, now)) : modelsDoc(MODELS_STATE, now));
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
+// --bench <state>: the benchmark pages' GETs (/api/bench/...; scripts/ui-fixture/bench.mjs). State: long
+// (long descriptions, notes, version and failure reason; 25 runs, one failed).
+const BENCH_STATE = opt('--bench', '');
+if (BENCH_STATE && !BENCH_STATES.includes(BENCH_STATE)) { console.error('--bench: one of ' + BENCH_STATES.join(', ')); process.exit(2); }
+// --tiers live|catchall: the Tiers and zones page (tiers.mjs)
+const TIERS = opt('--tiers', '');
+const TIER_LISTS = tierLists(TIERS);
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -185,8 +268,11 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME }));
-const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
+// with --models the instances are the catalog's (one loaded model, or none)
+const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac, INST_DETAIL) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
+const named = st => { for (const n of (st.view && st.view.nodes) || []) if ((NAMED_ONLY && n.hostname === NAMED_ONLY) || (NAMED_ONLY_ID && n.hostname === NAMED_ONLY_ID)) n.auto = false; return st; };
+// withNamedId(doc, now): --named-only-id appends the zone's id to the stored no_auto_nodes
+const withNamedId = (d, now) => { if (!NAMED_ONLY_ID) return d; const z = (status(now).agents || []).find(a => a.name === NAMED_ONLY_ID); if (z) d.no_auto_nodes = [...(d.no_auto_nodes || []), z.id]; return d; };
 
 function baseStatus(now) {
   const t = Math.round(now / 1000) * 1000;
@@ -226,7 +312,8 @@ function baseStatus(now) {
 }
 
 // the request rows of the mockup's table, the times relative to now
-function requests(now) {
+function requests(now) { return runNamed(withLong(requestRows(now), now)); }
+function requestRows(now) {
   // the machines that served a row, host first, each with its share of the
   // model (a fraction); the scheduler's own machine hosting holds no share
   const nodes = (...ns) => ns.map(([n, share], i) => Object.assign({ id: mac(n), name: MACHINES.find(m => m.n === n).name, role: i === 0 ? 'host' : 'helper' }, share ? { share } : {}));
@@ -248,7 +335,24 @@ function requests(now) {
     row(195, { status: 'refused', reason: 'queue_timeout', message: 'it waited longer than the queue time limit', queued_at: now - 700000, ended_at: now - 100000, profile: QWEN, wait_ms: 600000 }),
     // a non-streamed request whose app left: cancelled, no token counted
     row(194, { status: 'cancelled', reason: 'client_left', message: 'cancelled by the app that sent it', stream: false, queued_at: now - 760000, started_at: now - 759800, ended_at: now - 751800, profile: QWEN, nodes: onSched([4, 1]), duration_ms: 8000, wait_ms: 200 }),
-  ];
+  ].concat(WIDE_ZONES ? [
+    // --wide-zones: one, three and six machines
+    row(192, { status: 'done', queued_at: now - 800000, started_at: now - 799800, ended_at: now - 795900, profile: QWEN, tokens_in: 32, prefill_tps: 53.3, tokens_out: 160, decode_tps: 48.0, nodes: nodes([3, 1]), duration_ms: 3900, wait_ms: 200 }),
+    row(191, { status: 'done', queued_at: now - 820000, started_at: now - 819800, ended_at: now - 817400, profile: BIG, tokens_in: 28, prefill_tps: 120, tokens_out: 134, decode_tps: 62.1, nodes: onSched([3, 0.5], [4, 0.5]), duration_ms: 2400, wait_ms: 200 }),
+    row(190, { status: 'done', queued_at: now - 840000, started_at: now - 839800, ended_at: now - 834500, profile: BIG, tokens_in: 39, prefill_tps: 377, tokens_out: 160, decode_tps: 47.8, nodes: nodes([1, 0.17], [2, 0.17], [3, 0.17], [4, 0.17], [5, 0.16], [6, 0.16]), duration_ms: 5300, wait_ms: 200 }),
+    // rows as wide as live's (generic names): long model names, the scheduler's machine hosting with a
+    // long console name helping, a four-figure prompt rate; the page must stay inside 1280 with the menu open
+    row(189, { status: 'done', queued_at: now - 860000, started_at: now - 859800, ended_at: now - 859000, profile: 'tinyllama-1.1b-chat-v1.0:2k', tokens_in: 39, prefill_tps: 1034, tokens_out: 160, decode_tps: 214, nodes: WIDE_HOST('console-0a1b2c3d'), duration_ms: 800, wait_ms: 200 }),
+    row(188, { status: 'done', queued_at: now - 880000, started_at: now - 879800, ended_at: now - 877400, profile: 'qwen3-coder-30b-a3b:2k', tokens_in: 28, prefill_tps: 120, tokens_out: 134, decode_tps: 62.1, nodes: [{ id: 'local', name: 'scheduler-host', role: 'host' }, { id: mac(11), name: 'console-0a1b2c3d', role: 'helper', share: 0.5 }, { id: mac(12), name: 'console-9f8e7d6c', role: 'helper', share: 0.5 }], duration_ms: 2400, wait_ms: 200 }),
+    row(187, { status: 'done', queued_at: now - 900000, started_at: now - 899800, ended_at: now - 895900, profile: 'qwen3.5-4b:2k', tokens_in: 32, prefill_tps: 53.5, tokens_out: 160, decode_tps: 48.0, nodes: WIDE_HOST('console-05'), duration_ms: 3900, wait_ms: 200 }),
+  ] : []);
+}
+// --long-names: the newest rows, so the Overview's card shows them
+function withLong(rows, now) {
+  if (!LONG_NAMES) return rows;
+  const row = (id, o) => Object.assign({ id, kind: 'v1', stream: true, caller: 'anonymous', caller_kind: 'default', source_addr: '192.0.2.40' }, o);
+  return LONG.map((l, i) => row(206 + LONG.length - i, { status: 'done', queued_at: now - 3000 - i * 1000, started_at: now - 2900 - i * 1000, ended_at: now - 100 - i * 1000,
+    profile: l.id, short_name: l.short, model_file: l.file, tokens_in: 1834, tokens_reused: 0, prefill_tps: 1034, tokens_out: 1160, decode_tps: 214.6, nodes: WIDE_HOST('console-0a1b2c3d'), duration_ms: 2800, wait_ms: 100 })).concat(rows);
 }
 
 // tokens in and out per hour of the mockup's day (00:00 to 23:00)
@@ -371,6 +475,7 @@ const server = http.createServer((req, res) => {
   // the placement preview's dry run writes nothing
   // POST /api/plan: the Zones fixture's answers when --load names a load state (the Load dialog's states),
   // else the configuration pages' (profiles.mjs, Placement preview); the other model actions are the Zones fixture's
+  if (KEYS && p === '/api/mcp/tools') return json(res, 200, toolsAnswer());
   if (KEYS && (p === '/api/agents' || p.startsWith('/api/agents/'))) {
     const host = req.headers.host || 'fixture';
     const rot = /^\/api\/agents\/([^/]+)\/rotate$/.exec(p), one = /^\/api\/agents\/([^/]+)$/.exec(p);
@@ -381,15 +486,54 @@ const server = http.createServer((req, res) => {
     if (one && req.method === 'PATCH') return readBody(req, b => send(KEYS.patch(one[1], b || {}, host)));
     if (one && req.method === 'DELETE') return send(KEYS.revoke(one[1], host));
   }
+  const std = /^\/api\/models\/(.+)\/standard-set$/.exec(p);
+  if (std && req.method === 'POST') return readBody(req, b => { b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']); const r = standardWrite(decodeURIComponent(std[1]), STDSET, b); json(res, r.status, r.body); });
+  if (std && req.method === 'GET') { const r = standardSet(decodeURIComponent(std[1]), STDSET, (u.searchParams.get('short') || '').trim()); return json(res, r.status, r.body); }
+  const stg = /^\/api\/config\/profiles\/(.+)\/(promote|demote)$/.exec(p);
+  if (stg && req.method === 'POST') return readBody(req, b => {
+    const c = (b && b.comment) || req.headers['x-comment'];
+    if (!c) return json(res, 400, { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error' } });
+    json(res, 200, { revision: 413, changed: true, diff: [], warnings: [], audit_entry_ids: [77], id: decodeURIComponent(stg[1]), stage: stg[2] === 'promote' ? 'production' : 'test' });
+  });
   if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
+  // --models: PUT / DELETE /api/models/pin/{key} (v61), the comment in the body or X-Comment
+  if (MODELS_STATE && p.startsWith('/api/models/pin/') && (req.method === 'PUT' || req.method === 'DELETE')) return readBody(req, b => {
+    const comment = ((b && b.comment) || String(req.headers['x-comment'] || '')).trim();
+    const r = pinRoute(req.method, decodeURIComponent(p.slice('/api/models/pin/'.length)), comment, MODELS_STATE);
+    json(res, r.status, r.body);
+  });
+  // --trash: delete to the trash and restore (v65), the comment in the body or X-Comment
+  if (TRASH_STATE && req.method === 'POST' && p.startsWith('/api/models/delete/')) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = deleteRoute(TRASH_STATE, decodeURIComponent(p.slice('/api/models/delete/'.length)), b, u.searchParams, catalogDoc(now), now);
+    json(res, r.status, r.body);
+  });
+  const rst = /^\/api\/models\/trash\/([^/]+)\/restore$/.exec(p);
+  if (TRASH_STATE && req.method === 'POST' && rst) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = restoreRoute(TRASH_STATE, decodeURIComponent(rst[1]), b);
+    json(res, r.status, r.body);
+  });
+  const rmv = /^\/api\/models\/trash\/([^/]+)\/remove$/.exec(p);
+  if (TRASH_STATE && req.method === 'POST' && rmv) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = removeRoute(TRASH_STATE, decodeURIComponent(rmv[1]), b, u.searchParams, now);
+    json(res, r.status, r.body);
+  });
   if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
-  if (p === '/api/models') return json(res, 200, { version: 1, models: CATALOG ? cfgCatalog() : [] });
-  if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
-  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, { profiles: profileSpecs() })); }
+  if (p === '/api/models') { const d = MODELS_STATE ? catalogDoc(now) : { version: 1, models: CATALOG ? cfgCatalog() : [] }; if (LONG_NAMES) { const have = new Set(d.models.flatMap(m => (m.profiles || []).map(x => x.id))); d.models = d.models.concat(longCatalog().filter(m => !have.has(m.profiles[0].id))); } return json(res, 200, d); }
+  if (p === '/api/metrics/activity' && LONG_NAMES) return json(res, 200, { data: LONG.map((l, i) => ({ id: 900 + i, timestamp: new Date(now - (i + 1) * 60000).toISOString(), model: l.id, resp_status_code: 200, duration_ms: 3800,
+    tokens: { input_tokens: 1834, output_tokens: 1160, tokens_per_second: 214.6 } })) });
+  if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
+  if (BENCH_STATE && p.startsWith('/api/bench/')) { const d = benchRoute(BENCH_STATE, p, u.searchParams, now); return d ? json(res, 200, d) : notFound(res, p); }
+  // --models written: its written-need profiles are listed too (the Profiles page beside the Models list)
+  if (p === '/api/profiles') return json(res, 200, { profiles: (MODELS_STATE === 'written' ? writtenProfiles(catalogDoc(now)) : []).concat(profileEntries()) });
+  if (p === '/api/profiles/test') return json(res, 200, testProfiles(now));
+  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
@@ -401,13 +545,24 @@ const server = http.createServer((req, res) => {
   if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: PENDING ? Object.assign({}, d.settings, { default_model_source: PZ_SOURCE }) : d.settings, settings_set: d.settings_set }); }
   if (p === '/api/config/recovery') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, recovery: d.recovery }); }
   if (p === '/api/config/fleet') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, fleet: d.fleet }); }
+  if (p === '/api/history/summary' && LOADS) return json(res, 200, { events: 3, by_severity: { info: 2, warn: 1 }, loads: { ready: 2, failed: 0, cancelled: 0 }, incidents: [] });
+  if (p === '/api/history' && LOADS) {
+    const ld = [
+      { ts: now - 3 * 60000, seq: 43, type: 'loadFinished', severity: 'info', profile: 'qwen3-14b:16k', nodes: ['ps5-01'], summary: 'qwen3-14b:16k is ready.', data: { outcome: 'ready', load_s: 6.3, bytes: 414000, avg_mb_s: 0.066 } },
+      { ts: now - 9 * 60000, seq: 42, type: 'loadFinished', severity: 'info', profile: 'gemma-4-27b:32k', nodes: ['ps5-02', 'ps5-03'], summary: 'gemma-4-27b:32k is ready.', data: { outcome: 'ready', load_s: 21, bytes: 16500000000, avg_mb_s: 104.6 } },
+    ];
+    if (u.searchParams.get('type') === 'loadFinished') return json(res, 200, { events: ld, total_matching: ld.length });
+    return json(res, 200, { events: [...ld,
+      { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } }], total_matching: 3 });
+  }
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
     { ts: now - 70 * 60000, seq: 39, type: 'nodeLost', severity: 'error', nodes: ['ps5-06'], summary: 'Node ps5-06 was lost.', data: {} },
   ], total_matching: 3 });
   if (p === '/api/health') return json(res, 200, health(now));
-  if (p === '/api/nodes') { const st = status(now); return json(res, 200, { nodes: st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/nodes') { const st = status(now), l = localEntry(TIERS); return json(res, 200, { nodes: l ? [...st.agents, l] : st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/config/tiers') return json(res, 200, tiersDoc(TIERS, status(now), cfgDoc().revision));
   if (p === '/api/groups') return json(res, 200, groupsDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/uptime') return json(res, 200, uptimeDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));
@@ -475,7 +630,7 @@ function health(now) {
   const rows = [
     unknown ? row('zones', 'Zones', 'unknown', 'Status not read yet', '#/zones?filter=down')
       : two ? row('zones', 'Zones', 'problem', '7 of 8 reachable · 1 down', '#/zones?filter=down', 1) : row('zones', 'Zones', 'ok', '8 of 8 reachable', '#/zones'),
-    two ? row('runs', 'Runs', 'attention', '1 failed in the last hour', '#/overview?runs=failed', 1) : row('runs', 'Runs', 'ok', 'None failed in the last hour', '#/overview'),
+    two ? row('runs', 'Requests', 'attention', '1 failed in the last hour', '#/requests?status=failed', 1) : row('runs', 'Requests', 'ok', 'None failed in the last hour', '#/overview'),
     Object.assign(row('scheduler', 'Scheduler', 'ok', `Running · release ${RELEASE} · up 12 d`, '#/about'), { facts: { release: RELEASE, uptime_s: 12 * 86400 } }),
     row('mcp', 'MCP server', 'ok', 'Running · 3 keys active', '#/mcp', 3),
     row('storage', 'Storage', 'ok', '50.3 of 240 GB used', '#/about', 21),

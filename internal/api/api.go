@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,9 +30,11 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/groups"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelfiles"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
@@ -69,15 +72,24 @@ type Options struct {
 	WSStatusInterval time.Duration // status look period: at most 4 messages a second (default 250 ms)
 	WSLoadInterval   time.Duration // least status rate while a load runs (default 1 s)
 	WSIdleInterval   time.Duration // least status rate at all (default 5 s)
-	WSPingInterval   time.Duration // ping message period (default 15 s)
-	WSRequestsTick   time.Duration // running rows on the requests topic (default 1 s)
-	WSQueue          int           // per-client send queue (default 64 frames)
-	WSWriteTimeout   time.Duration // one frame write (default 10 s)
+	// WSIdlePace is how often the status is read while nothing is starting,
+	// stopping or queued (default 2 s; with a scripted status source, the
+	// status interval: nothing wakes the loop for those). A real change
+	// wakes the loop at once (ws.go statusLoop).
+	WSIdlePace     time.Duration
+	WSPingInterval time.Duration // ping message period (default 15 s)
+	WSRequestsTick time.Duration // running rows on the requests topic (default 1 s)
+	WSQueue        int           // per-client send queue (default 64 frames)
+	WSWriteTimeout time.Duration // one frame write (default 10 s)
 
 	// Bench and BenchStore are the benchmark feature; nil means it is off (its
 	// endpoints answer 503).
 	Bench      *bench.Manager
 	BenchStore *bench.Store
+	// BenchOffReason: the database's bench tables are newer than this build
+	// (bench.OpenShared): the bench routes answer 503 with this reason and
+	// enabled false, and the health summary has a Benchmarks row.
+	BenchOffReason string
 	// System is what /api/system reports about the configuration and storage.
 	System SystemInfo
 	// Config is the configuration service (REST /api/config); Audit receives the audit entries of runtime actions. Nil turns the endpoints off (503).
@@ -101,13 +113,35 @@ type Options struct {
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
-	fileCache    filecache.Sys                          // tests replace the page cache calls of POST /api/cache/evict
+	// trashOps replaces the writes of the models trash (tests act out a
+	// read-only folder); trashStop acts out a kill between its steps.
+	trashOps  *modelfiles.Ops
+	trashStop func(step string) bool
+	// proxyOnResponse is passed to the proxy as Options.OnResponse (tests cut
+	// a request once the model server's headers arrived).
+	proxyOnResponse func()
+	// trashUnloadWait replaces the 5 s a delete with interrupt waits for the
+	// file's instances to be gone (tests).
+	trashUnloadWait time.Duration
+	// trashClearEvery replaces the hour between two passes of the models
+	// trash clearing; < 0: the clearing task does not start (tests run
+	// clearTrash themselves).
+	trashClearEvery time.Duration
+	// modelsWritable replaces modelfiles.Writable (tests act out a read-only
+	// folder, or one where it cannot be told); it is then asked every time.
+	modelsWritable func(dir string) (writable, ok bool)
+	fileCache      filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
 	// aggregates and files (the dev harness shows a scripted or recorded cluster).
 	// It is called with the signature of the catalog the server has; when its
 	// own signature is the same it need not gather the input again.
 	catalogSource func(ctx context.Context, have string) (in CatalogInput, sig string, ok bool)
+	// catalogClock, catalogMinGap and catalogDriftGap replace time.Now and
+	// the gaps of the live channel's catalog rebuilds (catalogplans.go; tests).
+	catalogClock    func() time.Time
+	catalogMinGap   time.Duration
+	catalogDriftGap time.Duration
 
 	// The health summary (health.go): tests replace the disk read, its
 	// timeout and period, the push period and the task counters.
@@ -122,7 +156,8 @@ type Options struct {
 
 // Server is the http.Handler for the whole API.
 type Server struct {
-	occ *occupiedTotals // occupied.go: /api/system occupied_only
+	occ   *occupiedTotals // occupied.go: /api/system occupied_only
+	peaks *peakCycles     // peakcycles.go: /api/needs peak_cycles
 	// bg is cancelled by Close, which then waits for bgWG: the background
 	// work started outside a request (Warm) that reads the store.
 	bg       context.Context
@@ -144,11 +179,13 @@ type Server struct {
 	activity *activityLog
 	reqs     *usage.Recorder // the request log (requests.go)
 	hist     *history.Store
+	rt       runtimeCache   // GET /api/system's runtime block
 	files    modelFileCache // metadata of the files in models_dir (models.go)
 	catalog  catalogCache   // the model catalog, kept in memory (catalog.go)
 	// store is the database behind the audit log when it is the scheduler's
 	// own: it also keeps the agents, the model icons and the file metadata.
 	store       *cfgstore.Store
+	trash       trashState // the models trash (trash.go)
 	agents      agentRegistry
 	mcpToolList atomic.Pointer[func() any]
 
@@ -201,6 +238,10 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.reqs.SetNamer(s.modelName) // short_name: the same rule as /api/models
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
+	s.peaks = startPeakCycles(o.History)
+	if o.Usage.On() {
+		s.peaks.setTokens(o.Usage.SessionTokens)
+	}
 	s.groups = o.Groups
 	s.pending = newPendingZones()
 	if s.groups == nil {
@@ -230,8 +271,34 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(audit.WithDefaultUser(r.Context(), s.defaultUser()))
 	if r, ok := s.identify(w, r); ok && s.authorize(w, r) {
+		// a write may change what the status shows: look now, not at the
+		// next idle tick; at its start too, since a request may wait in the
+		// queue (a chat for a model that does not fit yet) until it ends
+		wakes := s.ws != nil && wakesStatus(r)
+		if wakes {
+			s.ws.poke()
+		}
 		s.mux.ServeHTTP(w, r)
+		if wakes {
+			s.ws.poke()
+		}
 	}
+}
+
+// wakesStatus reports whether a request may change what the status shows
+// beyond memory figures: any write but an agent's heartbeat and log upload.
+// Those carry memory figures, which reach a page at the idle pace, and seven
+// agents every 2 s would keep the status loop at its fast pace for good. An
+// agent's arrival or loss is recorded in the history, which wakes the loop.
+func wakesStatus(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if p := r.URL.Path; strings.HasPrefix(p, "/api/pool/nodes/") && (strings.HasSuffix(p, "/heartbeat") || strings.HasSuffix(p, "/logs")) {
+		return false
+	}
+	return true
 }
 
 // defaultUser is the name of the default user (setting default_user_name).
@@ -264,6 +331,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // returns, so the caller may close the database then.
 func (s *Server) Close() {
 	s.occ.cancel()
+	s.peaks.cancel()
 	s.stopLoadLinks()
 	s.bgCancel()
 	s.bgWG.Wait()
@@ -309,10 +377,18 @@ func (s *Server) routes() *http.ServeMux {
 	s.benchRoutes(m)
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
+	m.HandleFunc("GET /api/profiles/test", s.handleTestProfiles) // testprofiles.go
 	m.HandleFunc("GET /api/models", s.handleModelCatalog)
-	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail) // and GET /api/models/{key}/icon
-	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)     // only /api/models/{key}/icon
+	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)             // and GET /api/models/{key}/icon
+	m.HandleFunc("PUT /api/models/pin/{key...}", s.handlePinPut)              // pins.go
+	m.HandleFunc("POST /api/models/delete/{key...}", s.handleModelDelete)     // trash.go
+	m.HandleFunc("GET /api/models/trash", s.handleTrashList)                  // trash.go
+	m.HandleFunc("POST /api/models/trash/{id}/restore", s.handleModelRestore) // trash.go
+	m.HandleFunc("POST /api/models/trash/{id}/remove", s.handleTrashRemove)   // trashremove.go
+	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete)        // pins.go
+	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)                 // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
+	m.HandleFunc("POST /api/models/{key...}", s.handleModelPost) // only /api/models/{file}/standard-set (standardset.go)
 	// GET /api/nodes/availability (availability.go)
 	s.availabilityRoutes(m)
 	m.HandleFunc("GET /api/health", s.handleHealthSummary)
@@ -483,7 +559,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	if s.conf().RequestsLiveTimings && benchRun == "" && liveTimingsPath(r.URL.Path) {
 		ex.AddTimingsPerToken()
 	}
-	p, alias, ok := s.conf().Resolve(ex.Model)
+	p, alias, ok := s.resolveModel(ex.Model)
 	if !ok {
 		e := &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", ex.Model)}
@@ -540,6 +616,9 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	var res proxy.Result
 	defer func() {
 		lease.Release()
+		if res.Unloaded && res.Err != nil { // the request log says why; the transport's word stays here
+			s.log.Debug("a request was cut by a forced unload", "profile", lease.Profile, "transport", res.Err)
+		}
 		track.Ended(resultEnd(res))
 		s.activity.add(activityRecord{
 			Timestamp: s.opts.Now(), Model: lease.Profile, ReqPath: r.URL.Path, Status: res.Status,
@@ -553,9 +632,30 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		bodyLen = ex.BufferedBytes()
 	}
 	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, BodyLen: bodyLen, StallTimeout: lease.StallTimeout,
-		APIKey: lease.APIKey, Gone: lease.Gone, Live: live})
+		APIKey: lease.APIKey, Gone: lease.Gone, Live: live, CutBy: cutByOf(lease),
+		OnResponse: s.opts.proxyOnResponse})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// cutByOf is what the proxy tells a request whose instance was stopped on
+// purpose while it ran (scheduler Lease.CutBy): the 503 unloaded answer a
+// loading or queued caller gets, written the same way (writeSchedError).
+func cutByOf(l *scheduler.Lease) func() *proxy.CutAnswer {
+	if l == nil || l.CutBy == nil {
+		return nil
+	}
+	return func() *proxy.CutAnswer {
+		e := l.CutBy()
+		if e == nil {
+			return nil
+		}
+		msg := string(e.Reason)
+		if e.Message != "" {
+			msg += ": " + e.Message
+		}
+		return &proxy.CutAnswer{Status: e.Status, Message: msg, Type: errType(e.Status), Reason: string(e.Reason), RetryAfter: e.RetryAfter}
 	}
 }
 
@@ -677,7 +777,7 @@ func (s *Server) handleUnloadByName(w http.ResponseWriter, r *http.Request) {
 // never waits: the instance must be ready or draining right now.
 func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	model := r.PathValue("model")
-	p, alias, ok := s.conf().Resolve(model)
+	p, alias, ok := s.resolveModel(model)
 	if !ok {
 		writeSchedError(w, &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", model)})
@@ -722,6 +822,18 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// resolveModel is config Resolve, else a run-scoped profile the scheduler
+// holds now (scheduler/scoped.go).
+func (s *Server) resolveModel(model string) (*core.Profile, bool, bool) {
+	if p, alias, ok := s.conf().Resolve(model); ok {
+		return p, alias, true
+	}
+	if p, ok := s.sched.Scoped(model); ok {
+		return p, false, true
+	}
+	return nil, false, false
+}
+
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": s.activity.snapshot()})
 }
@@ -735,14 +847,72 @@ type modelRequest struct {
 	// Nodes (load and plan): place this load on these nodes only, as
 	// force_nodes would, without changing the profile (pin.go).
 	Nodes []string `json:"nodes"`
+	// Scope and the run's settings (load and plan): a run-scoped profile,
+	// "<model>@<scope>", the production profile with these settings, held
+	// in memory only (scheduler/scoped.go).
+	Scope     string  `json:"scope"`
+	Ctx       *int    `json:"ctx"`
+	Parallel  *int    `json:"parallel"`
+	KVQuant   *string `json:"kv_quant"`
+	FlashAttn *bool   `json:"flash_attn"`
+	Host      *string `json:"host"`
+	Thinking  *bool   `json:"thinking"`
+}
+
+func (m modelRequest) scoped() scheduler.ScopedLoad {
+	return scheduler.ScopedLoad{Model: m.Model, Scope: m.Scope, Nodes: m.Nodes, Ctx: m.Ctx, Parallel: m.Parallel,
+		KVQuant: m.KVQuant, FlashAttn: m.FlashAttn, Host: m.Host, Thinking: m.Thinking}
+}
+
+// scopedAudit is what the audit keeps of a scoped load: the scope, the
+// zones and the settings the body gave.
+func (m modelRequest) scopedAudit() map[string]any {
+	out := map[string]any{"scope": m.Scope}
+	if len(m.Nodes) > 0 {
+		out["nodes"] = m.Nodes
+	}
+	if m.Ctx != nil {
+		out["ctx"] = *m.Ctx
+	}
+	if m.Parallel != nil {
+		out["parallel"] = *m.Parallel
+	}
+	if m.KVQuant != nil {
+		out["kv_quant"] = *m.KVQuant
+	}
+	if m.FlashAttn != nil {
+		out["flash_attn"] = *m.FlashAttn
+	}
+	if m.Host != nil {
+		out["host"] = *m.Host
+	}
+	if m.Thinking != nil {
+		out["thinking"] = *m.Thinking
+	}
+	return out
 }
 
 func readModelRequest(w http.ResponseWriter, r *http.Request) (modelRequest, bool) {
 	var req modelRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	if err := dec.Decode(&req); err != nil || req.Model == "" {
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err == nil {
+		err = json.Unmarshal(b, &req)
+	}
+	if err != nil || req.Model == "" {
 		proxy.WriteError(w, http.StatusBadRequest, "body must be JSON with a \"model\" field", "invalid_request_error", "bad request", nil)
 		return req, false
+	}
+	// A scoped load's body is read strictly: a field this version does not
+	// know (say, a model file of its own) is refused, never ignored. The
+	// model file is always the production profile's.
+	if req.scoped().Set() {
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.DisallowUnknownFields()
+		var strict modelRequest
+		if err := dec.Decode(&strict); err != nil {
+			proxy.WriteError(w, http.StatusBadRequest, "scoped load: "+err.Error()+" (the model file is the production profile's)", "invalid_request_error", "bad request", nil)
+			return req, false
+		}
 	}
 	return req, true
 }
@@ -763,7 +933,12 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	var rep scheduler.PlanReport
 	var err error
-	if len(req.Nodes) > 0 {
+	if req.scoped().Set() {
+		if len(req.Nodes) > 0 && !s.checkViewNodes(w, r, req.Nodes) {
+			return
+		}
+		rep, err = s.sched.PlanScoped(r.Context(), req.scoped())
+	} else if len(req.Nodes) > 0 {
 		if !s.checkViewNodes(w, r, req.Nodes) {
 			return
 		}
@@ -778,7 +953,38 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	v := jsonView(rep).(map[string]any)
 	v["model"] = v["profile"]
 	delete(v, "profile")
+	addShapeFacts(v, s.conf(), req.Model)
+	s.addGrowthFacts(v, req.Model, req.scoped())
 	writeJSON(w, http.StatusOK, v)
+}
+
+// addShapeFacts adds to a plan answer the profile's ctx and parallel and
+// shape_shared_with: the other profiles with the same shape (model, ctx,
+// parallel and options), each with whether it was generated. A benchmark's
+// context_fill phase refuses to run on a shape a written profile shares,
+// because its memory peak becomes that shape's stored peak (B8).
+func addShapeFacts(v map[string]any, cfg *config.Config, model string) {
+	p, _, ok := cfg.Resolve(model)
+	if !ok {
+		return
+	}
+	if _, has := v["ctx"]; !has {
+		v["ctx"] = p.Ctx
+	}
+	if _, has := v["parallel"]; !has {
+		v["parallel"] = max(p.Parallel, 1)
+	}
+	if _, has := v["generated"]; !has {
+		v["generated"] = IsGeneratedProfile(p.Name, p.Generated)
+	}
+	shared := []map[string]any{}
+	for _, n := range scheduler.ProfilesOfShape(cfg, p.Name) {
+		if n == p.Name {
+			continue
+		}
+		shared = append(shared, map[string]any{"id": n, "generated": IsGeneratedProfile(n, cfg.Profiles[n].Generated)})
+	}
+	v["shape_shared_with"] = shared
 }
 
 func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
@@ -787,6 +993,10 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	req, ok := readModelRequest(w, r)
 	if !ok {
+		return
+	}
+	if req.scoped().Set() {
+		s.loadScoped(w, r, req)
 		return
 	}
 	var err error
@@ -813,6 +1023,28 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		out["nodes"] = req.Nodes
 	}
 	s.auditRuntime(r, audit.ActionLoad, name, after)
+	writeJSON(w, http.StatusAccepted, out)
+}
+
+// loadScoped is POST /api/load with a scope: the answer names the scoped
+// profile, its production profile and the scope.
+func (s *Server) loadScoped(w http.ResponseWriter, r *http.Request, req modelRequest) {
+	if len(req.Nodes) > 0 && !s.checkViewNodes(w, r, req.Nodes) {
+		return
+	}
+	name, err := s.sched.LoadScoped(r.Context(), req.scoped(), benchRunHeader(r.Header.Get("X-Bench-Run")))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	base, scope, _ := scheduler.SplitScoped(name)
+	after := req.scopedAudit()
+	after["production"] = base
+	s.auditRuntime(r, audit.ActionLoad, name, after)
+	out := map[string]any{"msg": "loading", "model": name, "production": base, "scope": scope}
+	if len(req.Nodes) > 0 {
+		out["nodes"] = req.Nodes
+	}
 	writeJSON(w, http.StatusAccepted, out)
 }
 

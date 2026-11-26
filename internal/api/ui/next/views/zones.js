@@ -37,7 +37,7 @@ import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, zoneStatus, sidePanel, skeleton, badge, empty, button, facts, dialog, toast, availStrip, availClass, availState, availLevel, dropButton, onDropChange, roleShare, runModel } from '../core/ui.js';
+import { liveView, zoneStatus, sidePanel, skeleton, badge, empty, button, facts, dialog, toast, availStrip, availClass, availState, availLevel, dropButton, onDropChange, roleShare, runModel, profileLabel, profileStage } from '../core/ui.js';
 import { pager } from '../core/pager.js';
 import { num, gb, gbNum, plural, durShort, dateTime, agoText, clock, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
@@ -893,14 +893,14 @@ registerView({
     function loadPart(id) {
       if (!profs) { readProfiles(); profs = { list: null }; }
       const list = profs.list;
-      const isGen = x => (typeof x.generated === 'boolean' ? x.generated : false);
-      const label = x => { const s = modelName(x.id); return s && s !== x.id ? `${s} · ${x.id}` : x.id; };
+      const isGen = x => profileStage(x) === 'test'; // test profiles: their own group, under their shown names
+      const label = x => { const s = modelName(x.id), n = profileLabel(x); return s && s !== x.id ? `${s} · ${n}` : n; };
       const cur_ = loadPick.get(id) || '';
       const sel_ = h('select.select', { 'data-zp': 'profile', 'aria-label': 'Choose a profile', disabled: !list || !list.length, style: 'flex:1;font-weight:600',
         onchange: e => { loadPick.set(id, e.target.value); if (side) side.redraw(); } },
         h('option', { value: '', selected: !cur_ }, !list ? 'Reading the profiles…' : profs.error ? 'The profiles could not be read' : list.length ? 'Choose a profile' : 'No profile to load'),
         list ? [list.filter(x => !isGen(x)).map(x => h('option', { value: x.id, selected: x.id === cur_ }, label(x))),
-          list.some(isGen) ? h('optgroup', { label: 'Generated for benchmarks' }, list.filter(isGen).map(x => h('option', { value: x.id, selected: x.id === cur_ }, label(x)))) : null] : null);
+          list.some(isGen) ? h('optgroup', { label: 'Test profiles' }, list.filter(isGen).map(x => h('option', { value: x.id, selected: x.id === cur_ }, label(x)))) : null] : null);
       return h('div.gp-acts', { key: 'load' }, sel_,
         button('Load', () => { const p = loadPick.get(id); if (p) askLoad(p, [id]); }, '', { 'data-zp': 'load', disabled: !cur_,
           title: profs.error ? 'The profiles could not be read: ' + profs.error : cur_ ? 'Shows the plan for the zones you choose, then loads' : 'Choose a profile first' }));

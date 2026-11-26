@@ -175,3 +175,29 @@ export class Keys {
     return { status: 200, body: { agent: this.view(k, host), revoked: true } };
   }
 }
+
+// GET /api/mcp/tools in the shape of mcpserver.ToolInfo: a few tools of each
+// group, for the MCP page's Tools section.
+export function toolsAnswer() {
+  const t = (name, group, scope, summary, o = {}) => Object.assign({ name, group, scope, summary, description: summary + ' (fixture text)', read_only: group === 'read', destructive: false, input_schema: { type: 'object' } }, o);
+  return {
+    server: { name: 'llm-scheduler', version: 'fixture' }, path: '/mcp', transport: 'http', protocol_versions: ['2025-06-18'], instructions: '',
+    tools: [
+      t('get_status', 'read', 'observe', 'What is loaded, what is waiting and the state of every zone.'),
+      t('list_models', 'read', 'observe', 'The model files and the profiles that load them.'),
+      t('plan_load', 'read', 'observe', 'Where a profile would load now, without loading it.'),
+      t('update_settings', 'configuration', 'settings', 'Change scheduler settings.', { destructive: true }),
+      t('save_profile', 'configuration', 'settings', 'Add or replace a profile.', { destructive: true }),
+      t('pause_node', 'configuration', 'zones', 'Stop new loads on a zone.'),
+      t('start_benchmark', 'benchmarks', 'models', 'Start a benchmark run.'),
+      t('load_model', 'runtime', 'models', 'Load a profile ahead of the first request.'),
+      t('unload_model', 'runtime', 'models', 'Stop a loaded model.', { destructive: true }),
+    ],
+    groups: [
+      { id: 'read', title: 'Read', note: 'Look at the cluster, the configuration, the history and benchmark results. Nothing changes.' },
+      { id: 'configuration', title: 'Configuration', note: 'Change settings, profiles, tiers and nodes. Every change is a revision that can be rolled back.' },
+      { id: 'benchmarks', title: 'Benchmarks', note: 'Define benchmarks and suites, start and cancel runs. A run loads and unloads real models.' },
+      { id: 'runtime', title: 'Load and unload', note: 'Load a model ahead of time or stop a loaded one. The web UI does this too (load, unload and force-unload, from Zones and Machine details).' },
+    ],
+  };
+}

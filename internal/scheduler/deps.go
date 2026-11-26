@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -140,7 +140,11 @@ type metaEntry struct {
 func (c *ConfigNeeds) HeaderReady(model string) bool {
 	c.mu.Lock()
 	defer supervise.Unlocked("scheduler", c.mu.Unlock)
-	_, ok := c.metas[filepath.Join(c.Cfg.ModelsDir, model)]
+	path, err := modelpath.Join(c.Cfg.ModelsDir, model)
+	if err != nil {
+		return false
+	}
+	_, ok := c.metas[path]
 	return ok
 }
 
@@ -153,13 +157,14 @@ func (c *ConfigNeeds) Warm(ctx context.Context, models []string) {
 		}
 		var path string
 		var ok bool
+		var bad error
 		func() {
 			c.mu.Lock()
 			defer supervise.Unlocked("scheduler", c.mu.Unlock)
-			path = filepath.Join(c.Cfg.ModelsDir, m)
+			path, bad = modelpath.Join(c.Cfg.ModelsDir, m)
 			_, ok = c.metas[path]
 		}()
-		if ok {
+		if ok || bad != nil {
 			continue
 		}
 		st, err := os.Stat(path)
@@ -206,6 +211,14 @@ func (c *ConfigNeeds) metaOf(path string) (*gguf.Meta, error) {
 	return meta, nil
 }
 
+// Forget drops the cached need of profile name (scoped.go: a scoped name
+// may come back with other settings).
+func (c *ConfigNeeds) Forget(name string) {
+	c.mu.Lock()
+	defer supervise.Unlocked("scheduler", c.mu.Unlock)
+	delete(c.cache, name)
+}
+
 // Need implements NeedProvider.
 func (c *ConfigNeeds) Need(p *core.Profile) (NeedInfo, error) {
 	c.mu.Lock()
@@ -228,7 +241,11 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 	if p.Kind == core.KindCommand {
 		return NeedInfo{Need: placer.Measured(p.NeedsMiB)}, nil
 	}
-	path := filepath.Join(c.Cfg.ModelsDir, p.Model)
+	path, err := modelpath.Join(c.Cfg.ModelsDir, p.Model)
+	if err != nil {
+		// a stored profile the path rule refuses is kept like a missing file (cfgsvc); its load is refused here
+		return NeedInfo{}, fmt.Errorf("model file of profile %q: %w", p.Name, err)
+	}
 	if p.NeedsMiB > 0 {
 		st, err := os.Stat(path)
 		if err != nil {

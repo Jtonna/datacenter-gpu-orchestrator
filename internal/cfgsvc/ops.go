@@ -31,7 +31,50 @@ func (s *Service) CreateProfile(ctx context.Context, o WriteOpts, id string, p *
 		if _, ok := d.Profiles[id]; ok {
 			return fmt.Errorf("profile %q: %w", id, ErrExists)
 		}
+		if err := keepMarks(id, nil, p); err != nil {
+			return err
+		}
 		d.Profiles[id] = p
+		return nil
+	}})
+}
+
+// keepMarks: stage and display_name are written through create and update
+// (profiles plan, slice B2). A write that leaves both out keeps the stored
+// ones, so a client that does not know them never wipes them; one that
+// sets either writes both (validated with the configuration).
+func keepMarks(id string, old, p *config.ProfileSpec) error {
+	if old != nil && p.Stage == "" && p.DisplayName == "" {
+		p.Stage, p.DisplayName = old.Stage, old.DisplayName
+	}
+	return nil
+}
+
+// SetStage is promote (stage production) and demote (stage test): one
+// revision audited as promote or demote; nothing is written when the
+// profile already has that stage, by mark or by rule (config.EffectiveStage).
+func (s *Service) SetStage(ctx context.Context, o WriteOpts, id, stage string) (*Result, error) {
+	action := audit.ActionPromote
+	switch stage {
+	case config.StageProduction:
+	case config.StageTest:
+		action = audit.ActionDemote
+	default:
+		return nil, &ValidationError{Messages: []string{fmt.Sprintf("stage must be %s or %s, got %q", config.StageProduction, config.StageTest, stage)}}
+	}
+	if p := s.Config().Profiles[id]; p != nil {
+		if st, _ := config.EffectiveStage(p); st == stage {
+			return &Result{Revision: s.Revision(), AuditEntryIDs: []int64{}, Diff: []audit.DiffItem{}, Warnings: []string{}, RestartRequired: []string{}}, nil
+		}
+	}
+	return s.mutate(ctx, o, mutation{action: action, fn: func(d *config.Document) error {
+		p, ok := d.Profiles[id]
+		if !ok {
+			return fmt.Errorf("profile %q: %w", id, ErrNotFound)
+		}
+		cp := *p
+		cp.Stage = stage
+		d.Profiles[id] = &cp
 		return nil
 	}})
 }
@@ -39,8 +82,12 @@ func (s *Service) CreateProfile(ctx context.Context, o WriteOpts, id string, p *
 // UpdateProfile replaces a profile; ErrNotFound when it does not exist.
 func (s *Service) UpdateProfile(ctx context.Context, o WriteOpts, id string, p *config.ProfileSpec) (*Result, error) {
 	return s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {
-		if _, ok := d.Profiles[id]; !ok {
+		old, ok := d.Profiles[id]
+		if !ok {
 			return fmt.Errorf("profile %q: %w", id, ErrNotFound)
+		}
+		if err := keepMarks(id, old, p); err != nil {
+			return err
 		}
 		d.Profiles[id] = p
 		return nil
@@ -226,10 +273,13 @@ func (s *Service) Rollback(ctx context.Context, o WriteOpts, n int64) (*Result, 
 	if err != nil {
 		return nil, ErrNotFound
 	}
+	// a stored revision is restorable: its profiles are checked as stored
+	// ones (stored.go); a file it names must be there (a rollback to a
+	// revision from before a model delete is refused until it is restored)
 	return s.mutate(ctx, o, mutation{action: audit.ActionRollback, fn: func(d *config.Document) error {
 		*d = *r.Doc.Clone()
 		return nil
-	}})
+	}, stored: r.Doc.Clone().Profiles, storedWhat: fmt.Sprintf("profiles of revision %d", n)})
 }
 
 // Import replaces the configuration with doc. Without replace it is refused
@@ -239,4 +289,46 @@ func (s *Service) Import(ctx context.Context, o WriteOpts, doc *config.Document,
 		*d = *doc.Clone()
 		return nil
 	}})
+}
+
+// NewProfile is one profile CreateMissing writes when its id is free.
+type NewProfile struct {
+	ID   string
+	Spec *config.ProfileSpec
+}
+
+// CreateMissing writes, in ONE revision, each profile whose id is neither a
+// profile id nor an alias; the others are skipped and never edited (the
+// standard set, profiles plan section 6). written and skipped are the ids,
+// in the order given; nothing is committed when every id is taken.
+func (s *Service) CreateMissing(ctx context.Context, o WriteOpts, ps []NewProfile) (res *Result, written, skipped []string, err error) {
+	res, err = s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {
+		written, skipped = nil, nil
+		taken := map[string]bool{}
+		for id, p := range d.Profiles {
+			taken[id] = true
+			if p != nil {
+				for _, a := range p.Aliases {
+					taken[a] = true
+				}
+			}
+		}
+		for _, np := range ps {
+			if np.ID == "" || np.Spec == nil {
+				return &ValidationError{Messages: []string{"profile id must not be empty"}}
+			}
+			if taken[np.ID] {
+				skipped = append(skipped, np.ID)
+				continue
+			}
+			taken[np.ID] = true
+			d.Profiles[np.ID] = np.Spec
+			written = append(written, np.ID)
+		}
+		return nil
+	}})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res, written, skipped, nil
 }

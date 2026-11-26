@@ -31,7 +31,11 @@ import (
 //	     - the compute buffer
 //
 // and never below the log's exact part L = (what the load log put on the
-// node) - the share - the compute buffer. It is not taken from a command
+// node) - the share - the compute buffer. It is taken only from a COLD load
+// on that node (coldLoad: the bytes sent there on the wire, measured, reach
+// half of what the log puts on its devices): after a cached reload the
+// worker already held the tensors, the node gave up almost nothing, and the
+// reading would be the log's part alone. It is not taken from a command
 // profile, a configured need, a model with a sliding window (whose estimate
 // is far off), a load whose log does not account for every node, or while
 // a node's latest and average free figures differ by more than
@@ -65,6 +69,16 @@ const deviceMovingMiB = 128
 type DeviceOverheadStore interface {
 	AllDevice() ([]needstore.DeviceOverhead, error)
 	PutDevice(needstore.DeviceOverhead) error
+	DeleteDeviceRow(shape, node string, devices int) error
+}
+
+// coldLoad: the bytes the host sent to a node on the wire (measured) reach
+// at least half of what the load log puts on that node's devices (logMiB):
+// the load really moved the model there. A cached or partly cached reload
+// (the worker already held the tensors: kilobytes cross the wire) is not
+// cold, and what the node gave up for it says nothing about the load.
+func coldLoad(sentBytes int64, measured bool, logMiB float64) bool {
+	return measured && logMiB > 0 && float64(sentBytes) >= logMiB*float64(1<<20)/2
 }
 
 func (c *schedCore) deviceOverheadAt(shape string, id core.NodeID, devices int) (*hostOH, bool) {
@@ -244,6 +258,10 @@ func (c *schedCore) deviceReadings(in *inst) (out []deviceReading, wait bool) {
 		if !ok {
 			return nil, false
 		}
+		if in.baseUnsettled[id] {
+			c.log.Debug("no per-device overhead reading: the base was taken just after a release on this node", "profile", in.prof.Name, "node", c.nodeName(id))
+			continue
+		}
 		n, ok := c.raw[id]
 		if !ok || n.FreeUnknown || !n.Online || !n.FreeAvgKnown {
 			return nil, true
@@ -252,6 +270,11 @@ func (c *schedCore) deviceReadings(in *inst) (out []deviceReading, wait bool) {
 			return nil, true
 		}
 		logMiB, _ := c.reportedOn(in, id)
+		if !coldLoad(in.peerSent[in.placement.Nodes[i].Addr], in.sentBytes > 0, float64(logMiB)) {
+			c.log.Debug("no per-device overhead reading: not a cold load on this node", "profile", in.prof.Name, "node", c.nodeName(id),
+				"bytes_sent", in.peerSent[in.placement.Nodes[i].Addr], "log_mib", logMiB)
+			continue
+		}
 		share := int(math.Ceil(float64(base.Need.MiB)*fracs[i] - 1e-6))
 		comp := max(base.DeviceMiB, 0)
 		logPart := logMiB - share - comp
@@ -264,6 +287,7 @@ func (c *schedCore) deviceReadings(in *inst) (out []deviceReading, wait bool) {
 // measureDeviceOverheads runs every step: it reads every settled load's
 // per-device overheads once per cycle.
 func (c *schedCore) measureDeviceOverheads() {
+	c.dropCachedDevice()
 	for _, in := range c.insts {
 		if in.state != stReady && in.state != stDraining {
 			continue
@@ -380,4 +404,151 @@ func (c *schedCore) deviceOverheadRows() []HostOverheadRow {
 		return a.Devices - b.Devices
 	})
 	return out
+}
+
+// DeviceHistory answers an event-history query (history.Store.Query);
+// the per-device rows read from cached loads are found with it once at start
+// (dropCachedDevice). nil: no history.
+type DeviceHistory func(history.Query) history.Result
+
+// devCheckWait is how long the check at start waits for the nodes of the
+// restored rows to appear in the view.
+const devCheckWait = 2 * time.Minute
+
+// dropCachedDevice drops, once at start, every restored row whose figure in
+// force came from a cached reload (the release before took readings from any
+// load). For each row, the event history is asked:
+//  1. for the learnedNeed events within 5 s of the reading that set the
+//     figure in force (the newest reading of that MiB, else measured_at):
+//     the one naming that node (its id or its name), that device count and
+//     that figure, from the row's own profile or a profile of its shape;
+//  2. for the newest loadFinished of that profile at or before it, on the
+//     same nodes.
+//
+// The row is dropped when that load did not move the model to the node
+// (coldLoad on its nodes_detail bytes and memory_mib), with a history line.
+// A row whose events are not found is kept. One log line and one history
+// event give the counts, also when nothing is dropped.
+func (c *schedCore) dropCachedDevice() {
+	if c.devChecked || c.devEventsFn == nil || len(c.raw) == 0 {
+		return
+	}
+	// The events name a console by its hostname, known once the console is
+	// in the view: wait for every restored row's node, at most devCheckWait
+	// after the first node was seen.
+	if c.devCheckFrom.IsZero() {
+		c.devCheckFrom = c.now
+	}
+	if c.now.Before(c.devCheckFrom.Add(devCheckWait)) {
+		for k, e := range c.devOHs {
+			if _, ok := c.raw[k.node]; e.restored && !ok {
+				return
+			}
+		}
+	}
+	c.devChecked = true
+	keys := make([]hostKey, 0, len(c.devOHs))
+	for k, e := range c.devOHs {
+		if e.restored {
+			keys = append(keys, k)
+		}
+	}
+	slices.SortFunc(keys, func(a, b hostKey) int {
+		return strings.Compare(fmt.Sprint(a.shape, a.node, a.devices), fmt.Sprint(b.shape, b.node, b.devices))
+	})
+	var dropped, cold, unknown, older int
+	var oldest int64
+	for _, k := range keys {
+		e := c.devOHs[k]
+		name := c.nodeName(k.node)
+		isNode := func(v any) bool { n, _ := v.(string); return n != "" && (n == name || n == string(k.node)) }
+		at := e.MeasuredAt
+		for _, r := range e.Readings {
+			if r.MiB == e.MiB && r.At.After(at.Add(-time.Hour)) {
+				at = r.At
+			}
+		}
+		// The reading's event: that figure and device count, from the row's
+		// profile (or one of its shape), within 5 s. The node is matched by
+		// its name or id; when the view does not know the console's name
+		// (it has not sent a heartbeat), a single candidate is taken.
+		var read *history.Event
+		var cands []history.Event
+		res := c.devEventsFn(history.Query{Types: []string{history.TLearnedNeed}, Since: at.Add(-5 * time.Second).UnixMilli(),
+			Until: at.Add(5 * time.Second).UnixMilli(), Limit: history.MaxLimit})
+		oldest = res.OldestTs
+		for _, ev := range res.Events {
+			if v, ok := numberOf(ev.Data["device_overhead_mib"]); !ok || v != e.MiB {
+				continue
+			}
+			if d, ok := numberOf(ev.Data["devices"]); ok && d != k.devices {
+				continue
+			}
+			if p := c.cfg.Profiles[ev.Profile]; ev.Profile != e.Profile && (p == nil || shapeOf(p) != k.shape) {
+				continue
+			}
+			if isNode(ev.Data["node"]) {
+				read = &ev
+				break
+			}
+			cands = append(cands, ev)
+		}
+		if read == nil && len(cands) == 1 {
+			read = &cands[0]
+		}
+		var load *history.Event
+		if read != nil {
+			for _, ev := range c.devEventsFn(history.Query{Types: []string{history.TLoadFinished}, Profile: read.Profile, Until: read.Ts, Limit: 1}).Events {
+				if slices.Equal(ev.Nodes, read.Nodes) {
+					load = &ev
+				}
+			}
+		}
+		var sent, logMiB float64
+		found := false
+		if load != nil {
+			evNode, _ := read.Data["node"].(string) // the console's name when the reading was taken
+			detail, _ := load.Data["nodes_detail"].([]any)
+			for _, d := range detail {
+				m, _ := d.(map[string]any)
+				if n, _ := m["node"].(string); n != "" && (n == evNode || isNode(n)) {
+					sent, _ = history.Num(m["bytes"])
+					logMiB, _ = history.Num(m["memory_mib"])
+					found = logMiB > 0
+				}
+			}
+		}
+		if !found {
+			if oldest > 0 && at.UnixMilli() < oldest {
+				older++
+			} else {
+				unknown++
+			}
+			c.log.Debug("per-device overhead kept: its load is not in the history", "node", name, "devices", k.devices, "mib", e.MiB)
+			continue
+		}
+		if measured, _ := load.Data["bytes_measured"].(bool); coldLoad(int64(sent), measured, logMiB) {
+			cold++
+			continue
+		}
+		dropped++
+		delete(c.devOHs, k)
+		c.changed = true
+		if c.persist {
+			row := e.HostOverhead
+			c.needOps = append(c.needOps, needOp{shape: k.shape, dev: &row, drop: true})
+		}
+		c.log.Info("per-device overhead from a cached load dropped", "node", name, "devices", k.devices, "mib", e.MiB, "bytes_sent", int64(sent))
+		c.record(history.TLearnedNeed, history.Info, read.Profile,
+			fmt.Sprintf("Dropped the per-device overhead of %s on %s (%s, %d MiB): the load it was read from was a cached reload (%d bytes sent to %s, under half of the %.0f MiB the log put there), so the reading measured nothing of the load.",
+				read.Profile, name, plural(k.devices, "device"), e.MiB, int64(sent), name, logMiB),
+			read.Nodes, "", map[string]any{"node": name, "devices": k.devices, "dropped_device_overhead_mib": e.MiB, "bytes_sent": int64(sent), "log_mib": logMiB})
+	}
+	c.log.Info("stored per-device overheads checked against the event history", "rows", len(keys), "dropped", dropped, "kept_cold", cold,
+		"kept_older_than_history", older, "kept_not_found", unknown)
+	c.record(history.TLearnedNeed, history.Info, "",
+		fmt.Sprintf("Checked %d stored per-device overhead rows against the event history: %d dropped (read from a cached load), %d kept (a cold load), %d kept (read before the oldest event in the history), %d kept (load not found in the history).",
+			len(keys), dropped, cold, older, unknown),
+		nil, "", map[string]any{"device_rows_checked": len(keys), "device_rows_dropped": dropped, "device_rows_cold": cold,
+			"device_rows_older_than_history": older, "device_rows_not_found": unknown})
 }
