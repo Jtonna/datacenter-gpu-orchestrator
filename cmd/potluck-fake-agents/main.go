@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -195,7 +196,9 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 	for _, n := range nodes {
 		a := &fakeagent.Agent{ID: n.ID, Name: n.Name, Addr: n.Addr, AgentPort: o.AgentPort, WorkerPort: o.WorkerPort, Potluck: base,
 			Release: rel, Install: agentproto.InstallBare, MemAvail: n.MemAvailableMiB, MemTotalMiB: n.MemTotalMiB,
-			GPUs: n.GPUs, Devices: n.Devices, WatchdogFloorMiB: n.WatchdogFloorMiB, HeartbeatEvery: o.Heartbeat,
+			// its own copies: the node rows stay with the fleet (followMemFile
+			// reads them) and the agent's setters write only the agent's
+			GPUs: slices.Clone(n.GPUs), Devices: slices.Clone(n.Devices), WatchdogFloorMiB: n.WatchdogFloorMiB, HeartbeatEvery: o.Heartbeat,
 			Stats: statsOf(n)}
 		if n.Capabilities != nil {
 			a.Capabilities = *n.Capabilities

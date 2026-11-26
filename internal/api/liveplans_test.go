@@ -14,6 +14,8 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
@@ -476,4 +478,50 @@ func TestLivePlansChangeReachesClient(t *testing.T) {
 		}
 	}
 	t.Fatal("the client did not get p02's new plan in time")
+}
+
+// One opening of a page that draws model avatars (the Overview, the
+// benchmark pages): GET /api/models, then one GET /api/models/<key>/icon per
+// avatar. The memory moves between the two (a heartbeat). The page open
+// costs at most one round of plans: an icon read needs the model's family,
+// which does not depend on the status, so it never computes the plans again
+// (it did: brandOfKey asked catalogGet, a fresh round whenever the status
+// had moved since GET /api/models; live counted two rounds of every plan per
+// open of the Overview, 26 Nov). GET /api/models itself stays fresh
+// (TestLivePlansRESTStaysFresh).
+func TestPageOpenPlanReads(t *testing.T) {
+	le := newLiveEnv(t, 0)
+	st, err := bench.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cs, err := cfgstore.Open(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	le.api.store = cs
+	reads := le.api.catalog.planReads.Load()
+	body(t, le.get("/api/models"))
+	if r := le.rounds(); r != 1 {
+		t.Fatalf("GET /api/models: %d plan rounds, want 1", r)
+	}
+	le.tick(2 * time.Second)
+	le.heartbeat(100) // the status moved while the page drew
+	for i := 0; i < 6; i++ {
+		res := le.get(fmt.Sprintf("/api/models/m%02d.gguf/icon", i))
+		res.Body.Close()
+		if res.StatusCode != 404 { // no icon is set: the family is looked up, and none is set either
+			t.Fatalf("icon %d: %d", i, res.StatusCode)
+		}
+	}
+	for _, p := range []string{"/api/status", "/api/system"} {
+		res := le.get(p)
+		res.Body.Close()
+	}
+	got := le.api.catalog.planReads.Load() - reads
+	t.Logf("one page open: %d plan rounds, %d plan reads (%d profiles)", le.rounds(), got, livePlanProfiles)
+	if r := le.rounds(); r != 1 || got != livePlanProfiles {
+		t.Fatalf("one page open computed %d rounds (%d plans), want 1 round of %d", r, got, livePlanProfiles)
+	}
 }

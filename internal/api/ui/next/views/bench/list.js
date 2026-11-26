@@ -146,7 +146,10 @@ function entryRow(g, e, i, expand) {
   return h('div.bp-entry', { key: 'e-' + i, 'data-entry': i },
     h('div.bp-etitle', title),
     sub ? h('div.bp-sub', sub) : null,
-    h('div.bp-opts', model ? [model, ' · '] : null, opts.join(' · '),
+    h('div.bp-opts', model ? [model, ' · '] : null,
+      // the board's "Smallest that fits" placement: the runner has no such form yet (B6)
+      e.kind === 'group' ? null : [notYet('Smallest that fits', WHY.b6), ' · '],
+      opts.join(' · '),
       // the board's "cold loads" group option: no field yet (B7)
       [' · ', notYet('cold loads', WHY.b7)]));
 }

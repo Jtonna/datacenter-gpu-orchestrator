@@ -58,6 +58,20 @@ export const benchmarkById = id => (bench.benchmarks || []).find(b => b.id === i
 export const groupTitle = g => (g && (g.name || g.id)) || '';
 export const benchTitle = b => (b && (b.name || b.id)) || '';
 
+// recipeTitle(step): the title of the benchmark a step ran. A step of a
+// recipe carries the runner's generated name, "<title> (<model>, 8k,
+// nodes:...)" (benchspec.Use): the page says the model, the placement and
+// the context in its own words, so the bracket is never printed.
+export function recipeTitle(st) {
+  const sp = (st && st.spec) || {};
+  const own = sp.recipe ? benchTitle(benchmarkById(sp.recipe)) : '';
+  if (own) return own;
+  const n = sp.name || (st && st.name) || '';
+  const i = n.lastIndexOf(' (');
+  if ((sp.recipe || sp.applied_inputs) && i > 0 && n.endsWith(')')) return n.slice(0, i);
+  return n || (st && st.benchmark_id) || sp.recipe || '';
+}
+
 // The run in progress (the progress document of the "bench" topic), or null.
 export function activeRun() {
   const run = state.bench.run;

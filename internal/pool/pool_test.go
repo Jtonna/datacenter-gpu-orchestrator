@@ -25,6 +25,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakeagent"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
 
@@ -139,14 +140,9 @@ func testRelease(t *testing.T) *release.Release {
 	return rel
 }
 
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.2:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
+// freePort is a port for the rig's fake agents, bound later on 127.0.0.n:
+// outside the ephemeral range (testutil/ports).
+func freePort(t *testing.T) int { return ports.Free(t, "127.0.0.2") }
 
 func newRig(t *testing.T) *rig {
 	r := &rig{t: t, clk: &clock{}, store: &memStore{m: map[string]cfgstore.NodeAdmin{}}, hist: &hist{},
@@ -763,19 +759,22 @@ func TestExtraDevicesOfTheBackendAreReported(t *testing.T) {
 }
 
 // The worker launches of a load must be ready within worker_start_timeout.
+// The timeout is 5 s, not 300 ms: the fast agent (a1) must be ready well
+// inside it even when the machine stalls (a run of -count=20 once saw a1
+// itself miss 300 ms); a2 never is (ready after a minute).
 func TestWorkerStartTimeoutFailsTheLoad(t *testing.T) {
 	r := newRig(t)
-	r.cfg.Defaults.WorkerStartTimeout = 300 * time.Millisecond
+	r.cfg.Defaults.WorkerStartTimeout = 5 * time.Second
 	a1 := r.agent(1)
 	a2 := r.agent(2, func(a *fakeagent.Agent) { a.ReadyAfter = time.Minute })
 	r.waitNode(a1.ID)
 	r.waitNode(a2.ID)
 	start := time.Now()
 	res := r.p.Launch(context.Background(), spec(3, a1, a2), func(scheduler.WorkerReport) {})
-	if res.Reason != ReasonWorkerStartTimeout || res.Node != core.NodeID(a2.ID) || !strings.Contains(res.Message, "300ms") {
+	if res.Reason != ReasonWorkerStartTimeout || res.Node != core.NodeID(a2.ID) || !strings.Contains(res.Message, "5s") {
 		t.Fatalf("%+v", res)
 	}
-	if d := time.Since(start); d > 10*time.Second {
+	if d := time.Since(start); d > 30*time.Second {
 		t.Fatalf("took %v", d)
 	}
 	r.p.Stop(3, nil)

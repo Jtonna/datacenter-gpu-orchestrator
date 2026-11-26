@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -89,10 +90,17 @@ type wsHub struct {
 	queue        int
 	writeTimeout time.Duration
 	pingEvery    time.Duration
-	statusEvery  time.Duration
+	statusEvery  time.Duration // the fastest the status is read (a change, a load)
 	loadEvery    time.Duration
 	idleEvery    time.Duration
+	idlePace     time.Duration // how often it is read while nothing moves
 	now          func() time.Time
+
+	// wake asks the status loop to read the status now (poke): a feed
+	// event, a history event, a write through the API
+	wake chan struct{}
+	// counters for tests: status reads, signature encodings, frames sent
+	statusReads, statusSigs, statusFrames atomic.Int64
 
 	hello    func() any
 	status   func(ctx context.Context) (any, error)
@@ -211,6 +219,7 @@ func (h *wsHub) publishEvent(e history.Event) {
 		return
 	}
 	h.broadcast(TopicEvent, wsFrame(TopicEvent, h.now(), e))
+	h.poke() // a node lost, joined or excluded: the status shows it now
 }
 
 // publishBench sends a benchmark event: {"kind": ...}.
@@ -426,39 +435,125 @@ func anyLoading(v any) bool {
 	return false
 }
 
-// statusLoop sends the status when it changed, at most once per tick; while a
-// load is in progress at least every loadEvery, and at least every idleEvery.
+// poke asks the status loop to read the status now. It never blocks.
+func (h *wsHub) poke() {
+	select {
+	case h.wake <- struct{}{}:
+	default:
+	}
+}
+
+// activeHold is how long after a wake the loop keeps the fast pace: the
+// steps that follow a change (a load's progress, a request ending) arrive
+// within it.
+const activeHold = 3 * time.Second
+
+// statusLoop sends the status when it changed. It reads it every
+// statusEvery while something moves (an instance starting, stopping or
+// draining, a queue, a wake in the last activeHold) and every idlePace
+// otherwise; a wake (poke) reads it at once, at most once per statusEvery.
+// It sends at least every loadEvery while a load runs and at least every
+// idleEvery at all.
+//
+// Why a pace and not a state version: the status moves with every
+// heartbeat (memory figures; seven agents every 2 s), so a version would
+// change several times a second and the loop would read as often as
+// before. The pace bounds the reads of a fleet whose only movement is its
+// memory; the wakes keep a real change as fast as before.
 func (h *wsHub) statusLoop() {
-	t := time.NewTicker(h.statusEvery)
+	var lastRead, lastWake time.Time
+	wait := h.statusEvery
+	t := time.NewTimer(wait)
 	defer t.Stop()
 	for {
+		woke := false
 		select {
 		case <-h.quit:
 			return
 		case <-t.C:
+		case <-h.wake:
+			woke = true
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
 		}
-		if h.clientCount() == 0 || h.status == nil {
-			continue
+		if woke {
+			lastWake = time.Now()
+			if gap := h.statusEvery - time.Since(lastRead); gap > 0 { // at most one read per statusEvery
+				select {
+				case <-h.quit:
+					return
+				case <-time.After(gap):
+				}
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		v, err := h.status(ctx)
-		cancel()
-		if err != nil {
-			continue
-		}
-		if h.onStatus != nil { // catalog code: its failure must not stop the status
-			supervise.Guard("api.catalog.status", func() { h.onStatus(v) }, nil)
-		}
-		supervise.Point("api.ws.status", h)
-		sig := statusSignature(v)
-		now := h.now()
-		due := sig != h.lastSig || now.Sub(h.lastSent) >= h.idleEvery || (anyLoading(v) && now.Sub(h.lastSent) >= h.loadEvery)
-		if !due {
-			continue
-		}
-		h.lastSig, h.lastSent = sig, now
-		h.broadcast(TopicStatus, wsFrame(TopicStatus, now, v))
+		active := false
+		func() {
+			defer func() { // the next wait, whatever happened below
+				if active || time.Since(lastWake) < activeHold {
+					wait = h.statusEvery
+				} else {
+					wait = h.idlePace
+				}
+				t.Reset(wait)
+			}()
+			if h.clientCount() == 0 || h.status == nil {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			v, err := h.status(ctx)
+			cancel()
+			lastRead = time.Now()
+			h.statusReads.Add(1)
+			if err != nil {
+				return
+			}
+			active = anyMoving(v)
+			if h.onStatus != nil { // catalog code: its failure must not stop the status
+				supervise.Guard("api.catalog.status", func() { h.onStatus(v) }, nil)
+			}
+			supervise.Point("api.ws.status", h)
+			sig := statusSignature(v)
+			h.statusSigs.Add(1)
+			now := h.now()
+			due := sig != h.lastSig || now.Sub(h.lastSent) >= h.idleEvery || (anyLoading(v) && now.Sub(h.lastSent) >= h.loadEvery)
+			if !due {
+				return
+			}
+			h.lastSig, h.lastSent = sig, now
+			h.statusFrames.Add(1)
+			h.broadcast(TopicStatus, wsFrame(TopicStatus, now, v))
+		}()
 	}
+}
+
+// anyMoving: an instance that is not settled (starting, loading, stopping,
+// draining) or a request waiting in the queue; the loop keeps its fast pace.
+func anyMoving(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return true
+	}
+	if q, _ := m["queue"].([]any); len(q) > 0 {
+		return true
+	}
+	insts, _ := m["instances"].([]any)
+	for _, i := range insts {
+		im, ok := i.(map[string]any)
+		if !ok {
+			continue
+		}
+		if s, _ := im["state"].(string); s != "ready" {
+			return true
+		}
+		if d, _ := im["drain"].(bool); d {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *wsHub) pingLoop() {
@@ -595,7 +690,7 @@ func (s *Server) newWSHub() *wsHub {
 	}
 	h := &wsHub{max: max, queue: queue, writeTimeout: orDur(o.WSWriteTimeout, 10*time.Second), pingEvery: orDur(o.WSPingInterval, 15*time.Second),
 		statusEvery: orDur(o.WSStatusInterval, 250*time.Millisecond), loadEvery: orDur(o.WSLoadInterval, time.Second), idleEvery: orDur(o.WSIdleInterval, 5*time.Second),
-		now: time.Now, clients: map[*wsClient]struct{}{}, quit: make(chan struct{}),
+		now: time.Now, clients: map[*wsClient]struct{}{}, quit: make(chan struct{}), wake: make(chan struct{}, 1),
 		log: func(msg string, args ...any) { s.log.Warn(msg, args...) }}
 	h.hello = func() any {
 		hist, benchState := "off", "off"
@@ -607,6 +702,27 @@ func (s *Server) newWSHub() *wsHub {
 		}
 		return map[string]any{"version": o.Version, "started_at": s.start.UnixMilli(), "server_time": s.opts.Now().UnixMilli(),
 			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing, TopicModels, TopicRequests, TopicHealth, TopicGroups}, "ws_max_clients": max, "config_revision": s.configRevision()}
+	}
+	h.idlePace = o.WSIdlePace
+	if h.idlePace <= 0 {
+		h.idlePace = 2 * time.Second
+		if o.statusSource != nil {
+			h.idlePace = h.statusEvery // a scripted status: nothing wakes the loop when it changes
+		}
+	}
+	if h.idlePace < h.statusEvery {
+		h.idlePace = h.statusEvery
+	}
+	// the scheduler's own changes (an instance's state, a load, a request
+	// admitted or ended) wake the status loop
+	if s.sched != nil && o.statusSource == nil {
+		feed, stop := s.sched.Subscribe(16)
+		h.cancels = append(h.cancels, stop)
+		go supervise.Once("api.ws.feedwake", func() {
+			for range feed {
+				h.poke()
+			}
+		}, nil)
 	}
 	h.status = o.statusSource
 	if h.status == nil {

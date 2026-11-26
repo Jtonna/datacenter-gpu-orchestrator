@@ -175,9 +175,12 @@ function profCell(m) {
     // one short line: "22 test profiles"
     test.length ? h('span.sub', { 'data-test': String(test.length), title: testText(test.length) }, testText(test.length)) : null);
 }
-// sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
+// sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line).
+// Below 0.1 GB in MB, below 1 MB "under 1 MB", as the trash page (models/trash.js sizeOf)
+// and the server's sentences (trashremove.go sizeText): "0.0 GB" reads as nothing.
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
-const sizeText = m => (m.kind === 'command' ? 'A program on this machine' : m.size_bytes ? gbOf(m.size_bytes) + ' GB' : DASH);
+const fileSize = v => (v >= 100e6 ? gbOf(v) + ' GB' : v >= 1e6 ? Math.round(v / 1e6).toLocaleString('en-US') + ' MB' : 'under 1 MB');
+const sizeText = m => (m.kind === 'command' ? 'A program on this machine' : m.size_bytes ? fileSize(m.size_bytes) : DASH);
 
 // diskLine(models, disk) -> "5 model files · 50.3 of 240 GB used", amber at 90 %
 function diskLine(models, disk) {

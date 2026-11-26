@@ -309,6 +309,11 @@ func (s *Server) catalogDirty(aggregates bool) {
 // catalogStatus is called with every status the live channel looked at.
 func (s *Server) catalogStatus(v any) {
 	c := &s.catalog
+	// nobody holds the catalog open: the rebuild loop would build nothing,
+	// so the signature (one more encoding of the status) is not computed
+	if s.ws != nil && !s.ws.wantsAny(TopicModels) {
+		return
+	}
 	snap, dirty := c.current()
 	if dirty {
 		c.poke()
