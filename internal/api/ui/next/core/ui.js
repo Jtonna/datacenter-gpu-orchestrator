@@ -837,13 +837,19 @@ export function runProfile(r) {
 
 // runProfileCell(r) -> the Model cell's content: the shown name, then the
 // model's short name muted ("TEST - p4-qwen4b-107 · qwen3.5-4b"), or the
-// stored id with "profile no longer exists"
+// stored id with "profile no longer exists". On one line that never widens
+// its table (span.rpc, app.css): the cell has a most width per layout; the
+// model's short name gives way first, then the shown name, each ending in
+// "…"; the whole text is on hover.
 export function runProfileCell(r) {
   const x = runProfile(r);
   if (!x.name) return DASH;
-  return [h('span', { 'data-shown': '' }, x.name),
-    x.gone ? h('span.mut', { 'data-gone': '' }, ' · profile no longer exists')
-      : x.model && x.model !== x.name ? h('span.mut', { 'data-short': '' }, ' · ' + x.model) : null];
+  const after = x.gone ? ' · profile no longer exists' : x.model && x.model !== x.name ? ' · ' + x.model : '';
+  const more = runModelTitle(r); // the profile id and the model file
+  return h('span.rpc', { title: x.name + after + (more && more !== x.name ? ' (' + more + ')' : '') },
+    h('span.rpc-n', { 'data-shown': '' }, x.name),
+    x.gone ? h('span.rpc-m.mut', { 'data-gone': '' }, after)
+      : after ? h('span.rpc-m.mut', { 'data-short': '' }, after) : null);
 }
 
 // promptRate(r) -> {rate, title} for a run's "In tok/s": its prefill_tps,
@@ -940,8 +946,9 @@ export function runsTable(o) {
       return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
-        // o.modelClass: a page that lets the Model cell wrap (Requests: rq-model)
-        h('td', { class: 'mono' + (o.modelClass ? ' ' + o.modelClass : ''), title: runModelTitle(r) }, runProfileCell(r)),
+        // the Model cell (rq-mc) never widens its table: app.css gives it the
+        // room the figures leave; o.modelClass: a page's own share (Requests: rq-model)
+        h('td', { class: 'mono rq-mc' + (o.modelClass ? ' ' + o.modelClass : ''), title: runModelTitle(r) }, runProfileCell(r)),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
         (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),

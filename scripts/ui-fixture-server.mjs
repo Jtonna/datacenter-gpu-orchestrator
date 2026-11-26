@@ -104,6 +104,12 @@
 // --wide-zones: the request list also holds rows served by one, three and
 // six machines (ids 190 to 192), for the Requests page's Zones column.
 //
+// --long-names: the request list (and Activity's recent requests) also holds
+// rows for live's longest Model cells (ids 186 to 184): a test profile whose
+// id is a generated benchmark profile's, a short test profile, and a
+// production profile whose model's short name is as long; /api/models names
+// their profiles and models. The cell must never widen its table.
+//
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
 // frame), so a queued row can be seen turning into a running one.
@@ -132,6 +138,19 @@ const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
 const LIVE_TIMINGS = argv.includes('--live-timings');
 const WIDE_ZONES = argv.includes('--wide-zones');
+const LONG_NAMES = argv.includes('--long-names');
+// live's longest Model cells (generic otherwise): profile id, stage, model file, short name
+const LONG = [
+  { id: 'bench-tinyllama-1-1b-chat-v1-0-q4-k-m-on-box-0a1b2c3d-2304', stage: 'test', file: 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf', short: 'tinyllama-1.1b-chat-v1.0', ctx: 2048 },
+  { id: 'p4-qwen4b-107', stage: 'test', file: 'Qwen3.5-4B-Q4_K_M.gguf', short: 'qwen3.5-4b', ctx: 2048 },
+  { id: 'qwen3-coder-30b-a3b-instruct:128k', stage: 'production', file: 'Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf', short: 'qwen3-coder-30b-a3b-instruct', ctx: 131072 },
+];
+// with --long-names the catalog also names the request list's own profiles, so they are not "no longer exists"
+const OWN = [{ id: 'gemma-4-27b:32k', file: 'gemma-4-27b-it-Q4_K_M.gguf', short: 'gemma-4-27b', ctx: 32768 }, { id: 'gemma-4-12b:64k', file: 'gemma-4-12b-it-Q4_K_M.gguf', short: 'gemma-4-12b', ctx: 65536 },
+  { id: 'qwen3-14b', file: 'Qwen3-14B-Q4_K_M.gguf', short: 'qwen3-14b', ctx: 16384 }].map(o => Object.assign({ stage: 'production' }, o));
+const longCatalog = () => LONG.concat(OWN).map(l => ({ key: l.file, kind: 'llama', file: l.file, exists: true, size_bytes: 2 ** 30, name: l.short, short_name: l.short, state: 'not_loaded', icon: null,
+  profiles: [{ id: l.id, ctx: l.ctx, stage: l.stage, shown_name: (l.stage === 'test' ? 'TEST - ' : '') + l.id }], profile_count: 1, generated_count: 0, startable_count: 1,
+  instances: [], measured: [], loads: { count: 0, recent: [] } }));
 // the scheduler's own machine hosting, one console holding the whole model (live's most common row)
 const WIDE_HOST = helper => [{ id: 'local', name: 'scheduler-host', role: 'host' }, { id: '02:00:00:00:00:0b', name: helper, role: 'helper', share: 1 }];
 const HEALTH = opt('--health', 'two');
@@ -291,7 +310,7 @@ function baseStatus(now) {
 }
 
 // the request rows of the mockup's table, the times relative to now
-function requests(now) { return runNamed(requestRows(now)); }
+function requests(now) { return runNamed(withLong(requestRows(now), now)); }
 function requestRows(now) {
   // the machines that served a row, host first, each with its share of the
   // model (a fraction); the scheduler's own machine hosting holds no share
@@ -325,6 +344,13 @@ function requestRows(now) {
     row(188, { status: 'done', queued_at: now - 880000, started_at: now - 879800, ended_at: now - 877400, profile: 'qwen3-coder-30b-a3b:2k', tokens_in: 28, prefill_tps: 120, tokens_out: 134, decode_tps: 62.1, nodes: [{ id: 'local', name: 'scheduler-host', role: 'host' }, { id: mac(11), name: 'console-0a1b2c3d', role: 'helper', share: 0.5 }, { id: mac(12), name: 'console-9f8e7d6c', role: 'helper', share: 0.5 }], duration_ms: 2400, wait_ms: 200 }),
     row(187, { status: 'done', queued_at: now - 900000, started_at: now - 899800, ended_at: now - 895900, profile: 'qwen3.5-4b:2k', tokens_in: 32, prefill_tps: 53.5, tokens_out: 160, decode_tps: 48.0, nodes: WIDE_HOST('console-05'), duration_ms: 3900, wait_ms: 200 }),
   ] : []);
+}
+// --long-names: the newest rows, so the Overview's card shows them
+function withLong(rows, now) {
+  if (!LONG_NAMES) return rows;
+  const row = (id, o) => Object.assign({ id, kind: 'v1', stream: true, caller: 'anonymous', caller_kind: 'default', source_addr: '192.0.2.40' }, o);
+  return LONG.map((l, i) => row(206 + LONG.length - i, { status: 'done', queued_at: now - 3000 - i * 1000, started_at: now - 2900 - i * 1000, ended_at: now - 100 - i * 1000,
+    profile: l.id, short_name: l.short, model_file: l.file, tokens_in: 1834, tokens_reused: 0, prefill_tps: 1034, tokens_out: 1160, decode_tps: 214.6, nodes: WIDE_HOST('console-0a1b2c3d'), duration_ms: 2800, wait_ms: 100 })).concat(rows);
 }
 
 // tokens in and out per hour of the mockup's day (00:00 to 23:00)
@@ -497,7 +523,9 @@ const server = http.createServer((req, res) => {
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
-  if (p === '/api/models') return json(res, 200, MODELS_STATE ? catalogDoc(now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
+  if (p === '/api/models') { const d = MODELS_STATE ? catalogDoc(now) : { version: 1, models: CATALOG ? cfgCatalog() : [] }; if (LONG_NAMES) { const have = new Set(d.models.flatMap(m => (m.profiles || []).map(x => x.id))); d.models = d.models.concat(longCatalog().filter(m => !have.has(m.profiles[0].id))); } return json(res, 200, d); }
+  if (p === '/api/metrics/activity' && LONG_NAMES) return json(res, 200, { data: LONG.map((l, i) => ({ id: 900 + i, timestamp: new Date(now - (i + 1) * 60000).toISOString(), model: l.id, resp_status_code: 200, duration_ms: 3800,
+    tokens: { input_tokens: 1834, output_tokens: 1160, tokens_per_second: 214.6 } })) });
   if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
   if (BENCH_STATE && p.startsWith('/api/bench/')) { const d = benchRoute(BENCH_STATE, p, u.searchParams, now); return d ? json(res, 200, d) : notFound(res, p); }
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });

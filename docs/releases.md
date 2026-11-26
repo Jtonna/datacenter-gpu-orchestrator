@@ -2,6 +2,13 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Web UI: a request's Model cell never widens its table
+
+No server change.
+
+- The Model cell of a request row (Overview, Requests, Activity) is one line that takes the room the other columns leave, up to 40 characters in the Overview card and 48 on the Requests page: the profile's shown name stays whole as long as the column allows, the model's short name gives way first, each ends in "…", and the whole text (with the profile id and the model file) is on hover. Before, a long test profile ("TEST - bench-…-2304 · tinyllama-1.1b-chat-v1.0") widened the Overview's card past the window at 1280 px and cut its last columns. On the Requests page the cell no longer wraps.
+- On a phone the Requests table scrolls inside its card, the Model filter is no wider than its bar, and the Overview's Requests card no longer lets a hidden column label widen the page.
+
 ## Restore keeps stored profiles
 
 No agent change, no new port, no table, no setting, no schema change (one new value of model_trash.state: held_back).

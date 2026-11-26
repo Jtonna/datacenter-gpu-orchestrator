@@ -68,7 +68,8 @@ func TestUIRequestsZonesWrap(t *testing.T) {
 // Rows as wide as live's (a copy of live data at 1280, menu open: document
 // 1294 px, "Sent by" past the card; the --wide-zones fixture with such rows
 // measured 1374 px in Chromium): the Model cell and the Sent by cell give way
-// first: Model wraps inside its column, Sent by is shortened past 12
+// first: Model takes the room the others leave, on one line ending in "…"
+// (TestUINextRequestModelCellNeverWidensItsTable), Sent by is shortened past 12
 // characters, Zones keeps at most 34 characters a line (full texts on hover);
 // the figures stay whole on one line. Measured in Chromium with
 // --wide-zones at 1280 and 1536, menu open and closed: scrollWidth ==
@@ -76,7 +77,7 @@ func TestUIRequestsZonesWrap(t *testing.T) {
 func TestUIRequestsWideRowsFit(t *testing.T) {
 	css := uiText(t, uiNextDir+"app.css")
 	for _, want := range []string{
-		".runs td.rq-model{white-space:normal;overflow-wrap:anywhere;min-width:7ch;line-height:1.35;padding-top:4px;padding-bottom:4px}",
+		".runs td.rq-mc{max-width:0;width:100%}",
 		// Sent by: at most 12 characters wide, shortened with "…", the full name and address on hover
 		".runs td.rq-sent span{display:block;max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 		// Zones: at most 34 characters a line, one machine a line when longer, so it does not take the room Model needs
