@@ -42,9 +42,14 @@ import (
 // FIT (C). Each is planned read-only (scheduler.PlanCandidates) on an idle
 // fleet (nothing loaded): what happens to be loaded does not decide a
 // model's standard set. The plan of now (start, evict, queue, reject) is
-// shown beside it, never decides. A row's state:
+// shown beside it, never decides. The state is that of the need on the
+// zones the fit was decided on (zones_need_*: the idle placement's count,
+// else the most it may use), the figure the placer compares; need_mib is
+// the plan's figure (/api/plan's), on the count of the latest measurement.
+// When they differ, zones_need_note names both. A row's state:
 //
-//	fits                    measured or derived need, fits: written by default
+//	fits                    measured need, fits: written by default
+//	fits-derived            need derived from other contexts of the model, fits: written by default
 //	fits-by-estimate        only the file estimate, fits: written by default, marked estimated
 //	estimate-does-not-fit   only the file estimate, does not fit: "not measured: by the
 //	                        file estimate it does not fit"; not written by default, may be ticked
@@ -87,6 +92,7 @@ const maxShortLen = 80
 // The row states (see the top of the file).
 const (
 	stdFits          = "fits"
+	stdFitsDerived   = "fits-derived"
 	stdFitsEstimate  = "fits-by-estimate"
 	stdEstimateNoFit = "estimate-does-not-fit"
 	stdNoFit         = "does-not-fit"
@@ -363,7 +369,16 @@ type standardRow struct {
 	FitNeedMiB *int   `json:"fit_need_mib"`
 	NeedNote   string `json:"need_note,omitempty"`
 	NeedSource string `json:"need_source"`
-	NeedBasis  string `json:"need_basis,omitempty"`
+	// ZonesNeed* is the need on the number of zones the fit was decided on
+	// (ZonesNeedCount: the idle placement's, else the most it may use): the
+	// figure the placer compares and the state is about. ZonesNeedNote names
+	// both figures when it differs from NeedMiB.
+	ZonesNeedCount  int    `json:"zones_need_count"`
+	ZonesNeedMiB    *int   `json:"zones_need_mib"`
+	ZonesNeedSource string `json:"zones_need_source"`
+	ZonesNeedBasis  string `json:"zones_need_basis,omitempty"`
+	ZonesNeedNote   string `json:"zones_need_note,omitempty"`
+	NeedBasis       string `json:"need_basis,omitempty"`
 	// ShapeNote: an estimate row of a file with an existing profile measured
 	// or written by hand in another shape names that profile's figure.
 	ShapeNote string `json:"shape_note,omitempty"`
@@ -454,17 +469,61 @@ func hostMemorySentence(hm *scheduler.HostMemory) string {
 	return s + fmt.Sprintf(" (restore points %s MiB, prompt cache %s MiB)", commas(hm.CheckpointsMiB), commas(hm.PromptCacheMiB))
 }
 
-// needSource names where a plan's need comes from.
+// needSource names where a plan's need comes from. A derived need is
+// placer.Measured too (needcount.go at), so derived is asked first: the
+// own slope (DerivedSlope) or the formula step from another context
+// (DerivedFromCtx).
 func needSource(r scheduler.PlanReport) string {
 	switch {
 	case r.NeedMiB <= 0:
 		return "unknown"
-	case r.Measured:
-		return "measured for this shape"
 	case r.DerivedFromCtx > 0 || r.DerivedSlope != nil:
 		return "derived"
+	case r.Measured:
+		return "measured for this shape"
 	}
 	return "estimate"
+}
+
+// zonesSource names where the need on the decided zone count comes from.
+func zonesSource(cp scheduler.CandidatePlan) string {
+	switch {
+	case !cp.ZonesNeedKnown:
+		return "unknown"
+	case scheduler.DerivedSource(cp.ZonesNeedSource):
+		return "derived"
+	case scheduler.MeasuredSource(cp.ZonesNeedSource):
+		return "measured for this shape"
+	}
+	return "estimate"
+}
+
+// sourceWords is a need source in the row's words.
+var sourceWords = map[string]string{"measured for this shape": "measured need", "derived": "need derived from other contexts of this model", "estimate": "file estimate"}
+
+// zonesNeedNote names the two figures of a row whose plan figure (on the
+// count of the latest measurement) is not the one the fit was decided on.
+func zonesNeedNote(r scheduler.PlanReport, cp scheduler.CandidatePlan, kept bool) string {
+	plan := fmt.Sprintf("/api/plan shows %s MiB, the need on the count of devices its figure rests on (%s)", commas(r.NeedMiB), r.NeedBasis)
+	src := map[string]string{"measured for this shape": "measured", "derived": "derived", "estimate": "the file estimate"}[zonesSource(cp)]
+	if kept {
+		return fmt.Sprintf("%s; on the %s it would use, its need is %s MiB (%s): the figure the fit was decided on", plan, plural(cp.ZonesCount, "zone", "zones"), commas(cp.ZonesNeedMiB), src)
+	}
+	most := "it may use at most " + plural(cp.ZonesCount, "zone", "zones")
+	if cp.ByPool {
+		most += " (the setting max_pool)"
+	}
+	out := fmt.Sprintf("%s; with nothing loaded %s, and on %d its need is %s MiB (%s): the figure the fit was decided on", plan, most, cp.ZonesCount, commas(cp.ZonesNeedMiB), src)
+	// which of the two the plan's own message quotes: a capacity refusal
+	// quotes the need on the zones it may use (placer.go Capacity, req.For),
+	// a "does not fit" the need before a count is chosen (placer.go place)
+	switch {
+	case strings.Contains(r.Reason, fmt.Sprintf("need %d MiB", cp.ZonesNeedMiB)):
+		out += "; the plan's message below quotes this one"
+	case strings.Contains(r.Reason, fmt.Sprintf("need %d MiB", r.NeedMiB)):
+		out += fmt.Sprintf("; the plan's message below quotes %s MiB, the need before a zone count is chosen", commas(r.NeedMiB))
+	}
+	return out
 }
 
 // everyZoneSentence: a row that uses every zone it may use.
@@ -584,7 +643,13 @@ func (s *Server) buildStandardSet(ctx context.Context, file, asked string) (*sta
 	for i, cp := range plans {
 		r := cp.Report
 		row := standardRow{ID: ps[i].Name, Ctx: ctxs[i], Action: string(r.Action), Zones: cp.Zones, MayUse: cp.MayUse, ByPool: cp.ByPool,
-			NeedSource: needSource(r), NeedBasis: r.NeedBasis, Host: r.Host, Kept: cp.IdleFits}
+			NeedSource: needSource(r), NeedBasis: r.NeedBasis, Host: r.Host, Kept: cp.IdleFits,
+			ZonesNeedCount: cp.ZonesCount, ZonesNeedSource: zonesSource(cp), ZonesNeedBasis: cp.ZonesNeedBasis}
+		if cp.ZonesNeedKnown {
+			z := cp.ZonesNeedMiB
+			row.ZonesNeedMiB = &z
+		}
+		on := fmt.Sprintf(" (%s MiB on %s)", commas(cp.ZonesNeedMiB), plural(cp.ZonesCount, "zone", "zones"))
 		if row.Kept {
 			row.Zones = cp.IdleZones
 		}
@@ -592,19 +657,24 @@ func (s *Server) buildStandardSet(ctx context.Context, file, asked string) (*sta
 		if r.Action == scheduler.PlanReject && r.Reason != "" {
 			says = "; the plan says: " + r.Reason
 		}
-		switch {
-		case row.NeedSource == "unknown":
+		switch zs := row.ZonesNeedSource; {
+		case row.NeedSource == "unknown" || zs == "unknown":
 			row.State, row.Kept, row.Reason = stdNeedUnknown, false, r.Reason // "memory need unknown: ...": nothing was placed
-		case row.NeedSource == "estimate" && row.Kept:
+		case zs == "estimate" && row.Kept:
 			row.State = stdFitsEstimate
-		case row.NeedSource == "estimate":
+		case zs == "estimate":
 			row.State = stdEstimateNoFit
-			row.Reason = "not measured: by the file estimate it does not fit even with nothing loaded" + says
+			row.Reason = "not measured: by the file estimate it does not fit even with nothing loaded" + on + says
+		case row.Kept && zs == "derived":
+			row.State = stdFitsDerived
 		case row.Kept:
 			row.State = stdFits
 		default:
 			row.State = stdNoFit
-			row.Reason = "by the " + map[bool]string{true: "measured", false: "derived"}[r.Measured] + " need it does not fit even with nothing loaded" + says
+			row.Reason = "by the " + sourceWords[zs] + " it does not fit even with nothing loaded" + on + says
+		}
+		if row.ZonesNeedMiB != nil && r.NeedMiB != *row.ZonesNeedMiB {
+			row.ZonesNeedNote = zonesNeedNote(r, cp, row.Kept)
 		}
 		switch r.Action {
 		case scheduler.PlanEvict:
@@ -633,7 +703,7 @@ func (s *Server) buildStandardSet(ctx context.Context, file, asked string) (*sta
 				row.NeedNote = fmt.Sprintf("the fit uses %s MiB: the estimate with its 5%% margin", commas(f))
 			}
 		}
-		if row.NeedSource == "estimate" {
+		if row.NeedSource == "estimate" || row.ZonesNeedSource == "estimate" {
 			row.ShapeNote = shapeNote(known, ctxs[i])
 		}
 		if row.Kept && len(row.Zones) > 0 && len(row.Zones) >= cp.MayUse {
