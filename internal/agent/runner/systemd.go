@@ -84,7 +84,9 @@ func (s *Systemd) StartArgs(sp Spec) []string {
 	if sp.OOMScoreAdjust != 0 {
 		args = append(args, "-p", "OOMScoreAdjust="+strconv.Itoa(sp.OOMScoreAdjust))
 	}
-	for _, e := range sp.Env {
+	// systemd-run gives the unit the manager's environment, not the agent's;
+	// the launch's own Env is passed without LLAMA_ARG_* (scrubLlamaArgs)
+	for _, e := range scrubLlamaArgs(sp.Env) {
 		args = append(args, "--setenv="+e)
 	}
 	if sp.LogPath != "" {

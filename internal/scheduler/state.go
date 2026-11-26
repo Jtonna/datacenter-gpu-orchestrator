@@ -210,6 +210,13 @@ type inst struct {
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
+	// launchNote: what the launch changed from the profile as stored (a
+	// checkpoint flag of its own dropped in favour of the setting;
+	// noteDroppedCkptFlag); shown in the instance's status.
+	launchNote string
+	// ckptChecked: bit 1 the recurrent state, bit 2 the first checkpoint,
+	// compared with the formula (hostmem.go checkHostMemorySizes).
+	ckptChecked int
 	// devMeasured: the per-device overheads of this cycle were read
 	// (deviceoverhead.go).
 	devMeasured bool
@@ -462,10 +469,15 @@ type schedCore struct {
 	feedSeq uint64
 
 	// History (history.go).
-	hist        []history.Event
-	memNext     map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
-	lastRefusal map[string]RefusalStatus  // newest recorded refusal per profile (status only; not deduplicated)
-	refused     map[string]*refusal       // last recorded refusal per profile and reason
+	hist    []history.Event
+	memNext map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
+	// ckptSeen is, per model file version and context per slot, the
+	// largest context checkpoint the server logged this run, for a model
+	// without an exact checkpoint rule (hostmem.go); memory only, gone at a
+	// restart.
+	ckptSeen    map[ckptKey]ckptLogged
+	lastRefusal map[string]RefusalStatus // newest recorded refusal per profile (status only; not deduplicated)
+	refused     map[string]*refusal      // last recorded refusal per profile and reason
 	viewSeen    bool
 	viewFresh   bool
 	viewConn    bool

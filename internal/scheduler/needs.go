@@ -82,6 +82,10 @@ func (k needKey) shape() string {
 // shapeOf is the key of p's learned need in c.learned and the store.
 func shapeOf(p *core.Profile) string { return needKeyOf(p).shape() }
 
+// ShapeOf is the shape key of p, as GET /api/needs and the stored peaks
+// name it.
+func ShapeOf(p *core.Profile) string { return shapeOf(p) }
+
 // ProfilesOfShape lists, sorted, the profiles of cfg whose load has the
 // shape of profile name's (they share one learned need); nil when there is
 // no such profile.

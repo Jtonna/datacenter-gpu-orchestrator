@@ -24,6 +24,24 @@ No agent change, no new port, no schema change, no new route, no new setting. Ev
 - **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
 - **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
 
+## Agent release: children start without `LLAMA_ARG_*`
+
+Agent only; the scheduler image below ships with or without it (the scheduler never starts a process through the agent's runners).
+
+- **The agent's children start without any `LLAMA_ARG_*` variable**, any case, as the scheduler's own children do. Before, the child runner passed the agent's whole environment, and both runners passed the launch's own `Env`. A `LLAMA_ARG_*` there would silently override the command line the scheduler built (`--ctx-checkpoints`, `--cache-ram`). The systemd runner passes the launch's `Env` without them; systemd-run never gives a unit the agent's own environment.
+- **Going back.** The agent before passes them again: check a node's environment for `LLAMA_ARG_*` before rolling back.
+
+## Scheduler image: host memory made explicit (checkpoints and prompt cache)
+
+No agent change needed, no new port, no new route, no table. Three new settings and no plan change by default. See the runbook, "The host process's own memory".
+
+- **New settings** in the existing settings document: `node_host_cache_ram_mib` (0), `ctx_checkpoints` (32) and `count_host_memory` (off). `cache_ram_mib` (2048) is unchanged.
+- **Explicit arguments.** Both launch paths pass `--cache-ram` and `--ctx-checkpoints`. The command lines are those of the image before, plus `--ctx-checkpoints 32` after `--cache-ram`. That is the model server's own default, so nothing it does changes.
+- **A managed flag.** `--ctx-checkpoints`, `-ctxcp` and `--swa-checkpoints` in `extra_args` are refused on a write. A stored profile that already has one still loads, with a WARN at start; each launch drops it and logs one WARN line naming the profile, the flag and value dropped and the value used, and the instance's status carries it as `launch_note`.
+- **The term.** Plans, profiles and the catalog show `host_memory`. `/api/status` shows `server_host_memory` and `/api/system` shows `host_memory`. A host on a node counts it only with `count_host_memory` on. A WARN `learnedNeed` event appears when the logged size is more than 1% from the formula. Only the qwen35 architecture has an exact rule (proven against the server's log); every windowed model (Gemma 4 included) and any other architecture shows "size not yet known: read at the first load", with no number and 0 in the term, until a load logs one; a plan note or status sum with such a model says "at least", with the checkpoints NOT included, never "up to". That figure holds for that file version and context only, says which, and is kept in memory until a restart.
+- **Peak cycles.** A `GET /api/needs` `peak_cycles` row whose shape no profile has now is kept, with `no_profile: true` and the note "no profile has this shape now".
+- **Going back.** The image before ignores the three settings and refuses no flag. Its launches pass no `--ctx-checkpoints`, which is the same 32.
+
 ## Scheduler image: the fill's stop check uses the measured growth
 
 No agent change, no schema, no new route, no new setting.

@@ -106,6 +106,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf, Drain: in.drain, PinnedNodes: c.pins[in.prof],
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
+		LaunchNote: in.launchNote,
 	}
 	instCtxStatus(&s, in)                              // realctx.go
 	s.Production, s.Scope, _ = c.scopeOf(in.prof.Name) // scoped.go
@@ -172,7 +173,8 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 }
 
 func (c *schedCore) statusDoc() Status {
-	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds(), ConfigRevision: c.cfg.Revision, Configured: c.cfg.Configured}
+	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds(), ConfigRevision: c.cfg.Revision, Configured: c.cfg.Configured,
+		ServerHostMemory: c.serverHostMemory()}
 	for _, in := range c.sortedInsts() {
 		st.Instances = append(st.Instances, c.instStatus(in))
 	}

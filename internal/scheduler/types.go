@@ -176,6 +176,10 @@ type Status struct {
 	// ConfigRevision is the configuration revision in force; Configured is false while the built-in defaults run (nothing imported yet).
 	ConfigRevision int64
 	Configured     bool
+	// ServerHostMemory sums, over the instances loaded on the scheduler's
+	// machine, the host-memory term nothing places there (hostmem.go):
+	// context checkpoints and prompt cache, each a ceiling.
+	ServerHostMemory ServerHostMemory
 }
 
 // InstanceStatus describes one instance.
@@ -205,7 +209,10 @@ type InstanceStatus struct {
 	Waiters        int
 	// StaleProfile: the profile was changed or deleted after this instance started; it keeps the definition it started with until its next load.
 	StaleProfile bool
-	VictimOf     string // profile of the claimed entry this instance drains or stops for
+	// LaunchNote: what the launch changed from the profile as stored (its
+	// own --ctx-checkpoints dropped in favour of the setting ctx_checkpoints).
+	LaunchNote string `view:"omitempty"`
+	VictimOf   string // profile of the claimed entry this instance drains or stops for
 	// Drain: an operator asked it to stop once its runs finish (drain.go);
 	// DrainEtaS estimates when, while it drains (nil otherwise, or when no
 	// run of the profile has finished yet). Both are left out of the status
@@ -563,6 +570,12 @@ type PlanReport struct {
 	HostOverheadSource     string    `view:"omitempty"`
 	HostOverheadMeasuredAt time.Time `view:"omitempty"`
 	HostProblem            string
+	// HostMemory is the host process's own memory where it is hosted
+	// (hostmem.go): in the host node's reservation when Counted, never
+	// placed on the scheduler's machine, where HostMemoryNote says so.
+	// Nil for a command profile or an unreadable header.
+	HostMemory     *HostMemory `view:"omitempty"`
+	HostMemoryNote string      `view:"omitempty"`
 }
 
 // PlanMemory is the memory section of a plan (reserve.go).
@@ -617,6 +630,10 @@ type PlanMemoryNode struct {
 	// HostOverheadMiB is host_overhead_mib on the node that hosts the load
 	// (in ContextMiB and WillTakeMiB already); 0 on any other node.
 	HostOverheadMiB int
+	// HostMemoryMiB is the host process's checkpoints and prompt cache on
+	// the host node when count_host_memory counts them (hostmem.go; in
+	// ContextMiB and WillTakeMiB already); 0 otherwise.
+	HostMemoryMiB int `view:"omitempty"`
 	// HostOverheadSource and HostOverheadMeasuredAt say, on the host row,
 	// which figure HostOverheadMiB is (as PlanReport's); empty elsewhere.
 	HostOverheadSource     string    `view:"omitempty"`

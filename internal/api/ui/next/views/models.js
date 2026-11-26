@@ -271,6 +271,25 @@ function needsLine(m, st, f) {
     f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), tail ? h('span.mut', ' (' + tail + ')') : null] : null);
 }
 
+// convMemory(m) -> the panel's "Conversation memory" line: for a recurrent
+// or windowed family, the restore points (context checkpoints) the model
+// keeps on the machine that hosts it, from its profiles' host_memory (GET
+// /api/profiles; scheduler hostmem.go), and whether what it needs counts
+// them (count_host_memory, a host on a node); nothing for a plain family
+function convMemory(m) {
+  const hm = (m.profiles || []).map(p => p.host_memory).find(x => x && x.family && x.family !== 'plain' && x.checkpoints > 0);
+  if (!hm) return null;
+  const lead = 'Conversation memory: this model keeps restore points on the machine that hosts it: ';
+  // a window model whose size the header does not tell: no number until a load's log gives it
+  if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load.');
+  // a size read from a load's log names the file and the context it was read at
+  const mb = num(Math.round(hm.cell_mib));
+  const each = hm.from_log ? `${mb} MB each as the server logged it at a load of ${hm.logged_file} at ctx ${num(hm.logged_ctx)}`
+    : hm.estimate ? `at most ${mb} MB each` : `about ${mb} MB each`;
+  return h('div.mut', { 'data-convmem': hm.from_log ? 'logged' : '', title: hm.from_log ? `Read from the model server's log this run (file of ${num(hm.logged_file_bytes)} bytes); kept until a restart` : null },
+    lead + `${each}, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)` + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
+}
+
 // the side panel of one model
 function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
@@ -304,6 +323,7 @@ function modelPanel(st, m, ps) {
       h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
       needsLine(m, st, f),
+      convMemory(m),
       facts([
         m.family ? ['Family', h('span', m.family)] : null,
         m.parameters ? ['Parameters', h('span', m.parameters)] : null,

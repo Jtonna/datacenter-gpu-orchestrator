@@ -17,7 +17,10 @@ type BuildOptions struct {
 	ServerBin   string // defaults.server_bin
 	ModelsDir   string // models_dir
 	LocalDevice string // defaults.local_device
-	CacheRAMMiB int    // defaults.cache_ram_mib
+	CacheRAMMiB int    // defaults.cache_ram_mib (a host on the scheduler's machine)
+	// CtxCheckpoints is --ctx-checkpoints (defaults.ctx_checkpoints), always
+	// passed: 0 is "keep none", not "unset".
+	CtxCheckpoints int
 }
 
 // OptionsFromConfig extracts BuildOptions from a validated config.
@@ -26,8 +29,21 @@ func OptionsFromConfig(c *config.Config) BuildOptions {
 		ServerBin:   c.Defaults.ServerBin,
 		ModelsDir:   c.ModelsDir,
 		LocalDevice: c.Defaults.LocalDevice,
-		CacheRAMMiB: c.Defaults.CacheRAMMiB,
+		CacheRAMMiB: c.Defaults.CacheRAMMiB, CtxCheckpoints: c.Defaults.CtxCheckpoints,
 	}
+}
+
+// HostOptions is what a host launch on a node takes from the configuration
+// (HostLaunchArgs).
+type HostOptions struct {
+	NoMmap         bool // defaults.host_no_mmap
+	CacheRAMMiB    int  // defaults.node_host_cache_ram_mib
+	CtxCheckpoints int  // defaults.ctx_checkpoints, as on the scheduler's launch
+}
+
+// HostOptionsFromConfig extracts HostOptions from a validated config.
+func HostOptionsFromConfig(c *config.Config) HostOptions {
+	return HostOptions{NoMmap: c.Defaults.HostNoMmap, CacheRAMMiB: c.Defaults.NodeHostCacheRAMMiB, CtxCheckpoints: c.Defaults.CtxCheckpoints}
 }
 
 // LlamaLogVerbosity is the --verbosity (-lv) threshold every kind: llama child
@@ -99,7 +115,7 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		"--ctx-size", strconv.Itoa(p.Ctx * parallel),
 		"--parallel", strconv.Itoa(parallel),
 	}
-	args = append(args, profileHead(o.CacheRAMMiB)...)
+	args = append(args, profileHead(o.CacheRAMMiB, o.CtxCheckpoints)...)
 	if len(rpc) > 0 {
 		args = append(args, "--rpc", strings.Join(rpc, ","))
 	}
@@ -115,15 +131,21 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 }
 
 // profileHead is the part of a llama command line that follows --parallel
-// and comes before the placement flags.
-func profileHead(cacheRAMMiB int) []string {
-	return []string{
-		"--jinja",
-		"--cache-ram", strconv.Itoa(cacheRAMMiB),
-		// Always raise the log verbosity, in this fixed position (right after
-		// --cache-ram, before the placement flags): see LlamaLogVerbosity.
-		"-lv", strconv.Itoa(LlamaLogVerbosity),
-	}
+// and comes before the placement flags. Both launch paths use it, so the
+// host process's own memory is set the same way on each (HostMemoryArgs).
+func profileHead(cacheRAMMiB, ctxCheckpoints int) []string {
+	args := append([]string{"--jinja"}, HostMemoryArgs(cacheRAMMiB, ctxCheckpoints)...)
+	// Always raise the log verbosity, in this fixed position (after the host
+	// memory flags, before the placement flags): see LlamaLogVerbosity.
+	return append(args, "-lv", strconv.Itoa(LlamaLogVerbosity))
+}
+
+// HostMemoryArgs is what a launch says about the host process's own memory,
+// always explicit: the prompt cache (--cache-ram, MiB per loaded model) and
+// the context checkpoints per slot (--ctx-checkpoints; the server's default
+// is 32, which only recurrent and sliding-window models fill).
+func HostMemoryArgs(cacheRAMMiB, ctxCheckpoints int) []string {
+	return []string{"--cache-ram", strconv.Itoa(cacheRAMMiB), "--ctx-checkpoints", strconv.Itoa(ctxCheckpoints)}
 }
 
 // profileTail is the profile's own part, last on the command line.
@@ -135,25 +157,23 @@ func profileTail(p core.Profile) []string {
 	if p.FlashAttn {
 		args = append(args, "--flash-attn", "on")
 	}
-	return append(args, p.ExtraArgs...)
+	// a flag the scheduler manages since (a stored profile may still carry
+	// it, config.StripLateManaged) is never passed: the setting is the value
+	return append(args, config.StripLateManaged(p.ExtraArgs)...)
 }
-
-// HostCacheRAMMiB is --cache-ram for a host on a node: no prompt cache in
-// the node's RAM, which nothing accounts for (phase 6).
-const HostCacheRAMMiB = 0
 
 // HostLaunchArgs is the extra_args of a host launch on a node (phase 6): the
 // part of BuildArgs that does not depend on where the program runs. The
 // agent adds --host, --port, the model, -c, --parallel, --rpc, --device and
-// --tensor-split itself. It differs from BuildArgs only in --cache-ram
-// (HostCacheRAMMiB) and in --no-mmap, which noMmap adds (the setting
-// host_no_mmap): weights then sit in anonymous memory, counted in
-// MemAvailable and watched by the watchdog, instead of pages mapped from
-// the share.
-func HostLaunchArgs(p core.Profile, noMmap bool) []string {
+// --tensor-split itself. It differs from BuildArgs only in --cache-ram (the
+// setting node_host_cache_ram_mib, default 0: no prompt cache in the node's
+// RAM) and in --no-mmap, which o.NoMmap adds (the setting host_no_mmap):
+// weights then sit in anonymous memory, counted in MemAvailable and watched
+// by the watchdog, instead of pages mapped from the share.
+func HostLaunchArgs(p core.Profile, o HostOptions) []string {
 	args := []string{"--n-gpu-layers", "999", "--fit", "off"}
-	args = append(args, profileHead(HostCacheRAMMiB)...)
-	if noMmap {
+	args = append(args, profileHead(o.CacheRAMMiB, o.CtxCheckpoints)...)
+	if o.NoMmap {
 		args = append(args, "--no-mmap")
 	}
 	return append(args, profileTail(p)...)

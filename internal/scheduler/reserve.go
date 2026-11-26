@@ -181,7 +181,7 @@ type reservedShare struct {
 	ID         core.NodeID
 	Weights    int // the node's share of the model file
 	Context    int // the rest of its share: KV cache, compute buffers, overhead
-	Host       int // host_overhead_mib when the node hosts the load (in Context too); 0 otherwise
+	Host       int // host_overhead_mib when the node hosts the load (in Context too), plus the counted host-memory term (hostmem.go); 0 otherwise
 	Fill       int // the fill reserve (0 when a peak is used, or the reserve is off)
 	Total      int // Weights + Context + Fill
 	Basis      string
@@ -562,7 +562,9 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 		e := PlanMemoryNode{ID: pn.ID, Node: nodeLabel(pn.ID, n), Shared: n.SharedMemory, TotalMiB: n.TotalMiB,
 			WeightsMiB: r.Weights, ContextMiB: r.Context, FillReserveMiB: r.Fill, WillTakeMiB: r.Total, Basis: r.Basis,
 			FreeNowMiB: c.freeMiB(pn.ID, n), HeadroomMiB: n.HeadroomMiB, MarginMiB: r.Margin, MarginRule: r.MarginRule,
-			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n), HostOverheadMiB: r.Host}
+			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n)}
+		e.HostMemoryMiB = c.hostTermOn(p, pl, pn.ID) // hostmem.go: 0 unless count_host_memory
+		e.HostOverheadMiB = r.Host - e.HostMemoryMiB
 		if h := hostOf(p, pl); h != "" && h == pn.ID {
 			_, e.HostOverheadSource, e.HostOverheadMeasuredAt = c.hostOverheadOf(p, pn.ID, len(pl.Nodes)) // hostoverhead.go
 		}
