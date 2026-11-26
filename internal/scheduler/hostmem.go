@@ -164,9 +164,10 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 			h.CheckpointsMiB = int(math.Ceil(float64(n)*seen.MiB - 1e-9))
 		}
 	}
-	if onNode {
-		h.Counted = d.CountHostMemory
-	} else {
+	// counted against whichever machine hosts it (hostnode.go on a
+	// console, hostbudget.go on the scheduler's machine)
+	h.Counted = d.CountHostMemory
+	if !onNode {
 		h.Machine = c.serverName()
 	}
 	// the cache of the path it is launched on: cache_ram_mib, or
