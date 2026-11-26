@@ -189,6 +189,59 @@ go run ./cmd/devcluster --listen 127.0.0.1:8790 --scenario demo
 
 It runs the real scheduler against simulated machines. The UI is at `http://127.0.0.1:8790/ui/`.
 
+## How a release is judged
+
+A candidate build replaces the live scheduler only after three programs have run on a **copy** of the live data folder. Take the copy from a stopped scheduler or a snapshot, never from a database being written. The programs live in this repository, so a gate can be run again from a clean clone at a commit. Nothing about one deployment is built in: the data folder, the models folder, the program release, the fake fleet and the builds are all flags. The examples use 192.0.2.x addresses and made-up names.
+
+The first two are `potluck-gate` (`cmd/potluck-gate`). A build is a binary, or `image:NAME` for an image run with `docker run --network host`. Each program copies `--data` into its own work folder and never writes the source.
+
+1. **Readiness and crash test.** It loops configuration writes and reads on one build. It kills the build at random moments within a write and starts it again.
+
+   ```sh
+   go build -o bin/potluck-gate ./cmd/potluck-gate
+   bin/potluck-gate crash --scheduler image:potluck:candidate --data /srv/copy/data --models /srv/models \
+       --programs /srv/programs --cycles 2000 --kills 40 --out gate/crash.json
+   ```
+
+   It passes when all of these hold:
+   - every read parses;
+   - every acknowledged write is stored whole, and a write cut by a kill is stored whole or not at all;
+   - the configuration revision never goes back;
+   - `/api/profiles`, `/api/config/profiles` and the model catalog list the same number of profiles;
+   - the log has no panic and no `ERROR` line. `--allow-log` names an error the caller expects.
+
+   Output: one line with the cycles, the writes, the kills, the listings by kind, the bad reads and the bad writes, plus the JSON file. Exit 0 PASS, 1 FAIL.
+
+2. **Plan rows of two builds.** OLD and NEW run, one after the other, on the same copy, each with the same fake fleet (`potluck-fake-agents --nodes FILE`, built from `cmd/potluck-fake-agents`; `nodes.sample.json` shows the format).
+
+   ```sh
+   bin/potluck-gate plans --old image:potluck:live --new image:potluck:candidate --data /srv/copy/data \
+       --models /srv/models --programs /srv/programs --nodes gate/nodes.json --fake-agents bin/potluck-fake-agents --out gate/plans
+   ```
+
+   Each run dumps every profile's need and every field of its plan, including each node's memory row (`will_take_mib`, `basis`, `host_overhead_mib` and its source). It then runs OLD again on the data NEW touched, and NEW again: **the way back**. Both re-runs must match their first dumps. Each comparison prints the number of profiles whose plan differs and the rows (profile, field, old, new); `plans.json` has them all. The exit status is 0, unless `--fail-on old-new,way-back` names what the caller expects to be equal.
+
+3. **Every page drawn.** `scripts/gate/pages.mjs` draws every route of the web UI of a running scheduler, at 1536 and 1280 px wide by default, as full-page PNGs. Start the candidate on a copy first. The harness never checks that the address is not live: pointing it at a copy is the caller's job.
+
+   It sends no write. Every request that is not a GET is aborted in the browser; `--allow-post /api/plan` lets a named dry-run POST through. The routes come from three places:
+   - the shell's links;
+   - the detail routes built from the API's answers: the first profile, model, deleted model, run, group and zone. No id is fixed in the script;
+   - every link on a drawn page whose shape is new.
+
+   For each page it reports whether the page scrolls sideways, the squeezed texts, and the console errors. A text is squeezed when it is clipped, or when it wraps in a box narrower than `--min-chars` characters. The rule is in `pages-lib.mjs`.
+
+   ```sh
+   cd scripts/gate && npm install && npx playwright install chromium
+   node pages.mjs --base http://192.0.2.20:3122 --out ../../gate/pages
+   ```
+
+   Playwright is a dev dependency of `scripts/gate` alone, pinned in its `package.json`. It lives there beside the other UI scripts, and the scheduler itself does not use node. In the Playwright container image of the same version, no install is needed. On Git Bash for Windows, set `MSYS_NO_PATHCONV=1`, or `/api/plan` is rewritten to a Windows path.
+
+Each program has `--help` and a `--dry-run` that starts nothing. `go test ./cmd/potluck-gate` checks all three in about 20 seconds:
+- the crash test and the plan comparison run against a fake build that loses writes or changes plans;
+- the same two run against the real scheduler with a fake fleet;
+- the harness's rules run under `node --test`.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

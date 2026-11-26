@@ -1,0 +1,13 @@
+{
+  "name": "potluck-gate-pages",
+  "private": true,
+  "description": "The every-page drawing harness of the release gate (pages.mjs). Playwright is its only dependency, for development and the gate only; the scheduler does not use node.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "pages": "node pages.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.52.0"
+  }
+}

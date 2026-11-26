@@ -510,7 +510,7 @@ func planRun(ctx context.Context, o plansOpts, spec schedSpec, name, data, work 
 			return d, false, nil
 		}
 		prev = d
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
