@@ -695,6 +695,13 @@ for (const c of spec.cases) {
     if (!els.length) errors.push(`no element matches: ${sel}`);
     for (const e of els) { const got = String(e.textContent).replace(/\s+/g, ' ').trim(); if (got !== want) errors.push(`${sel} reads "${got}", want "${want}"`); }
   }
+  // pageSeq: {"css selector": ["text", ...]}: the trimmed texts of the
+  // elements on the page that selector matches, in document order, are
+  // exactly these (a menu's order)
+  for (const [sel, want] of Object.entries(c.pageSeq || {})) {
+    const got = document.body.querySelectorAll(sel).map(e => String(e.textContent).replace(/\s+/g, ' ').trim());
+    if (JSON.stringify(got) !== JSON.stringify(want)) errors.push(`${sel} reads ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+  }
   for (const [sel, n] of Object.entries(c.pageCount || {})) { const k = document.body.querySelectorAll(sel).length; if (k !== n) errors.push(`${k} elements on the page match ${sel}, want ${n}`); }
   // evenX: selectors of chart points (cx) that must be spread evenly within
   // each chart (their parent svg): the widest gap between neighbouring x

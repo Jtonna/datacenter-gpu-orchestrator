@@ -11,8 +11,8 @@
 // The rail as the design draws it (Components board 2, the rail of every
 // page): the mark (not a link), Monitor, Zones, Models, Benchmarks; then at
 // its foot Ask Potluck, MCP and the System health heart; and the gear
-// "Settings" (Q69), which holds Profiles, Tiers and zones, Settings, Audit,
-// About (the link to the classic UI is gone with it, 24 Nov). Rail items are buttons with a
+// "Settings" (Q69), which opens on Settings and holds Profiles, Test
+// profiles, Tiers and zones, Placement preview, Audit, About (the link to the classic UI is gone with it, 24 Nov). Rail items are buttons with a
 // title, as drawn. Ask Potluck opens a drawer at the right edge that says it
 // is not built yet; the heart opens the health popup (core/health.js), and
 // its dot is the worst row's colour.
@@ -84,17 +84,19 @@ export const NAV = [
   { id: 'mcp', label: 'MCP', icon: I.mcp, foot: true, pages: [
     { id: 'mcp', label: 'MCP', desc: 'The MCP server and the keys of AI agents' },
   ] },
-  // the gear (Q69): everything that configures Potluck or describes it
+  // the gear (Q69): everything that configures Potluck or describes it. The
+  // gear opens the section's first page: Settings, the cluster's own
+  // settings (the owner's walkthrough, build-92), not Profiles.
   { id: 'settings', label: 'Settings', icon: I.gear, foot: true, gear: true, pages: [
+    { id: 'settings', label: 'Settings', desc: 'Holds, timeouts, settle time and the other defaults' },
     { id: 'profiles', label: 'Profiles', desc: 'Models, context size and memory need' },
     // under Profiles and out of the way (profiles plan, section 9)
     { id: 'test-profiles', label: 'Test profiles', desc: 'Profiles for trials and benchmarks, kept apart' },
     { id: 'tiers', label: 'Tiers and zones', desc: 'Priority, link speed, switch zones off' },
-    { id: 'settings', label: 'Settings', desc: 'Holds, timeouts, settle time and the other defaults' },
-    { id: 'audit', label: 'Audit', desc: 'Every change, who made it and why' },
-    { id: 'about', label: 'About', desc: 'Release, connection and data on disk' },
     // until it folds into the zone panel's "Load a model" (D8)
     { id: 'placement', label: 'Placement preview', desc: 'Where a profile would load now, and why' },
+    { id: 'audit', label: 'Audit', desc: 'Every change, who made it and why' },
+    { id: 'about', label: 'About', desc: 'Release, connection and data on disk' },
     // Logs is not a view of this page: it opens the log store's own search
     // page in a new tab (core/logs.js), and is there only while logging is on.
     { id: 'logs', label: 'Logs', external: true },
