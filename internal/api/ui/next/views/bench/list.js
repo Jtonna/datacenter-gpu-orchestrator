@@ -32,7 +32,7 @@ import * as api from '../../core/api.js';
 import { empty, skeleton, searchField, sidePanel, dialog, toast, bar, runIcon } from '../../core/ui.js';
 import { num, dur, plural, DASH } from '../../core/format.js';
 import { bench, groupById, benchmarkById, groupTitle, benchTitle, activeRun, groupSub, chain, entryOf, matrixWords, optionWords,
-  when, tookS, resultIcon, dots, coldNote, notYet, WHY, placementWords, modelName } from './common.js';
+  when, tookS, resultIcon, outcomeResult, resultTone, dots, coldNote, notYet, WHY, placementWords, modelName } from './common.js';
 import { runButton, cancelButton, notStartable, isRecipe, queuedCount } from './run.js';
 import { duplicateGroup, editLink } from './edit.js';
 
@@ -99,11 +99,11 @@ function benchRow(b, saved) {
   return h('div.bp-row', { key: 'b-' + b.id, role: 'listitem', class: saved ? 'saved' : null, 'data-bench': b.id, 'data-saved': saved ? '' : null },
     kindIcon(false),
     h('div.bp-main', h('span.bp-name', benchTitle(b)), h('div.bp-sub', chain(b), b.not_startable ? [h('span.bp-sep', ' · '), notStartable(b.not_startable)] : null)),
-    h('div.bp-last', u ? [resultIcon({ result: u.outcome === 'ready' ? 'passed' : u.outcome === 'running' ? 'running' : u.outcome === 'refused' ? 'refused' : u.outcome === 'refused_by_exclusion' ? 'not_judged' : 'failed' }, 14), ' ',
+    h('div.bp-last', u ? [resultIcon({ result: outcomeResult(u.outcome) }, 14), ' ',
       h('a', { href: href('benchmarks', ['runs', String(u.run_number || u.run_id), String(u.step)]), title: 'Open this use: run ' + (u.run_number || u.run_id) }, when(u.at))]
       : h('span.mut', 'Never run')),
-    h('div.bp-res', u ? h('span.bp-dots', h('span', { class: 'bp-dot ' + (u.outcome === 'ready' ? 'ok' : u.outcome === 'running' || u.outcome === 'refused_by_exclusion' ? '' : u.outcome === 'refused' ? 'ref' : 'bad'),
-      title: u.outcome === 'ready' ? '1 passed' : u.outcome === 'refused_by_exclusion' ? 'not judged: the profile forces an excluded zone' : u.outcome }, '1')) : null),
+    h('div.bp-res', u ? h('span.bp-dots', h('span', { class: 'bp-dot ' + resultTone(outcomeResult(u.outcome)), 'data-result': outcomeResult(u.outcome),
+      title: u.outcome === 'ready' ? '1 passed' : u.outcome === 'refused_by_exclusion' ? 'not judged: the profile forces an excluded zone' : ['cancelled', 'skipped'].includes(u.outcome) ? '1 not run' : u.outcome }, '1')) : null),
     h('div.bp-took.mut', u && u.duration_s != null ? dur(u.duration_s) : ''),
     h('span.bp-hacts', (b.parallel || []).length ? null : h('a.btn.sm.bp-edit', { href: editLink('benchmark', b.id), 'data-act': 'edit', title: 'Edit ' + benchTitle(b) }, 'Edit'),
       b.not_startable ? null : isRecipe(b) ? notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.recipe) : runButton('benchmark', b.id, 'Run', 'btn sm bp-hover')));

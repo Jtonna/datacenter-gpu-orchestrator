@@ -149,6 +149,18 @@ export function resultIcon(r, size = 16) {
   return h('span.bp-ri', { title: RESULT_WORD[res] || res, 'data-result': res }, icon);
 }
 export const resultWord = r => RESULT_WORD[resultOf(r)] || resultOf(r);
+// outcomeResult(outcome, state) -> the result of one step or one use of a
+// benchmark (B1 step `outcome`) for resultIcon: cancelled and skipped stay
+// themselves (grey, nothing failed); any other outcome that is not a pass or
+// a refusal is a failure (failed, error, a time-out)
+export const outcomeResult = (o, state) => (o === 'ready' || o === 'ok' || o === 'completed' ? 'passed' : o === 'refused_by_exclusion' ? 'not_judged'
+  : o === 'refused' ? 'refused' : o === 'cancelled' ? 'cancelled' : o === 'skipped' ? 'skipped' : o === 'running' ? 'running'
+    : o ? 'failed' : state === 'running' ? 'running' : 'queued');
+// resultTone(result) -> the class of a result's dot or word: ok (passed),
+// bad (failed and timed out only), ref (refused), notrun (cancelled,
+// skipped: the neutral grey), '' (running, not judged, queued)
+const RESULT_TONE = { passed: 'ok', with_issues: 'ok', failed: 'bad', refused: 'ref', cancelled: 'notrun', skipped: 'notrun' };
+export const resultTone = res => RESULT_TONE[res] || '';
 
 // dots(counts, running): "22 · 1 · 1" passed, failed, refused with their
 // hovers; "9 passed · 87 to go" while a run runs (B1 counts).

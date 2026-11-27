@@ -19,7 +19,7 @@ import { href } from '../../core/router.js';
 import * as api from '../../core/api.js';
 import { skeleton, empty } from '../../core/ui.js';
 import { num, dur, dateTime, DASH } from '../../core/format.js';
-import { modelName, zonesWord, notYet, WHY } from './common.js';
+import { modelName, zonesWord, notYet, WHY, outcomeResult, resultTone } from './common.js';
 
 export function resultsData() { return { rows: null, err: '', loading: false, key: null, contexts: [] }; }
 // loadResults(d, p): p.ctx and p.run (the result views' Context and From
@@ -65,7 +65,7 @@ function fig(cell, key, first, at) {
   const v = cell[key];
   if (v == null) {
     if (first && OUTCOME[cell.outcome]) {
-      return h('a', { class: 'bp-out ' + (cell.outcome === 'refused' || cell.outcome === 'refused_by_exclusion' ? 'ref' : 'bad'), href: reportOf(cell), title: cell.reason || OUTCOME[cell.outcome],
+      return h('a', { class: 'bp-out ' + (cell.outcome === 'refused_by_exclusion' ? 'ref' : resultTone(outcomeResult(cell.outcome))), href: reportOf(cell), title: cell.reason || OUTCOME[cell.outcome],
         'data-outcome': cell.outcome }, OUTCOME[cell.outcome]);
     }
     return h('span.mut', { title: NOT, 'data-missing': key }, DASH);

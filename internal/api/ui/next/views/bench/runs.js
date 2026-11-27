@@ -38,7 +38,7 @@ import { num, dur, plural, DASH, mib } from '../../core/format.js';
 import { catalog } from '../../core/catalog.js';
 import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
-import { bench, when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord, recipeTitle } from './common.js';
+import { bench, when, tookS, resultIcon, resultWord, outcomeResult, resultTone, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord, recipeTitle } from './common.js';
 import { pinButton, kindIcon } from './list.js';
 import { runButton, cancelButton, queuePos, ordinal, stepNow, isRecipe } from './run.js';
 import { RESULT_VIEWS, resultsView } from './results.js';
@@ -216,8 +216,7 @@ export function reasonOnce(st) {
   return seen.join(' · ');
 }
 const STEP_WORD = { ready: 'Passed', completed: 'Passed', failed: 'Failed', error: 'Failed', refused: 'Refused', refused_by_exclusion: 'Not judged', cancelled: 'Cancelled', skipped: 'Skipped' };
-const stepResult = st => (st.outcome === 'ready' ? 'passed' : st.outcome === 'refused_by_exclusion' ? 'not_judged' : st.outcome === 'refused' ? 'refused' : st.outcome === 'cancelled' ? 'cancelled'
-  : st.outcome === 'skipped' ? 'skipped' : st.outcome ? 'failed' : st.state === 'running' ? 'running' : 'queued');
+const stepResult = st => outcomeResult(st.outcome, st.state);
 
 const isInterrupted = st => st.outcome === 'error' && String(st.error || '').trim() === 'interrupted';
 function kpi(n, word, cls) {
@@ -453,7 +452,7 @@ export function reportPanel(ref, slug, onClose) {
         h('span.mut', 'took ', st.started_at && st.finished_at ? dur((st.finished_at - st.started_at) / 1000) : DASH)),
       phases.length ? h('ol.bp-steps', phases.map((ph, i) => {
         const sec = repSections.find(s => s.idx === ph.idx) || null;
-        const failedHere = ph.outcome && !['ok', 'ready'].includes(ph.outcome);
+        const failedHere = ph.outcome && resultTone(outcomeResult(ph.outcome)) === 'bad';
         return h('li.bp-step', { key: 'p-' + ph.idx, 'data-phase': ph.idx, class: failedHere ? 'bad' : null },
           h('div.bp-steprow', h('span.bp-n', num(i + 1)), h('b', stepTitle(ph, i, phases, spec)), h('span.bp-fig', phaseLine(ph, phases)), h('span.grow'),
             sec && sec.transcript ? h('a', { href: sec.transcript, target: '_blank', rel: 'noopener' }, 'Transcript') : null),

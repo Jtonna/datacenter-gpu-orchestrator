@@ -1733,6 +1733,7 @@ table.bp-res-t td.bp-model{font-weight:var(--w-strong);white-space:nowrap}
 .bp-out{font-weight:var(--w-strong);text-decoration:none}
 .bp-out.bad{color:var(--failed)}
 .bp-out.ref{color:var(--amber-text)}
+.bp-out.notrun{color:var(--text-2)}
 a.bp-view{text-decoration:none}
 a.bp-view:hover{background:var(--hover-bg)}
 .bp-head b.mut{color:var(--quiet)}

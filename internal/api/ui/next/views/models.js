@@ -38,7 +38,8 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, factGrid, badge, filterSelect, dialog, runStatus, profileLabel } from '../core/ui.js';
+import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, factGrid, badge, filterSelect, dialog, profileLabel } from '../core/ui.js';
+import { resultIcon, resultWord } from './bench/common.js';
 import { num, gb, tps, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
 import { staleBanner, nodeName, nodeMemory, machines, shortReason, plainReason } from '../core/status.js';
 import { loadConfig, loadSchema, fieldsOf, clone } from '../core/configdata.js';
@@ -520,10 +521,11 @@ function benchView(m, ps) {
             : h('div.mdl-runs', { role: 'list' }, list.map(x => {
               const sm = x.summary || {};
               const name = x.suite_name || x.benchmark_id || x.suite_id || x.id;
-              const icon_ = x.state === 'completed' ? (sm.failed ? 'failed' : 'done') : x.state === 'paused' ? 'running' : x.state;
+              // the Benchmarks pages' mark (views/bench/common.js): a cancelled run is the grey dash, never the red cross
+              const res = x.result || (x.state === 'completed' ? (sm.failed ? 'failed' : 'passed') : x.state === 'paused' ? 'running' : x.state);
               return h('a.mdl-run', { key: x.id, role: 'listitem', href: href('benchmarks', ['runs', x.id]), title: 'Open the report of ' + x.id },
                 h('span.mdl-run-n', h('b', name), h('span.mut.mono', x.id)),
-                h('span.mdl-run-s', runStatus(icon_, x.state === 'completed' ? 'report' : x.state),
+                h('span.mdl-run-s', resultIcon({ result: res }, 14), ' ', h('span', x.state === 'completed' ? 'report' : resultWord({ result: res })),
                   sm.steps ? h('span.mut', ` · ${num(sm.passed || 0)} of ${num(sm.steps)} passed`) : null),
                 h('span.mut.mdl-run-t', when(x) ? h('time', { title: dateTime(when(x)) }, dayOf(when(x))) : DASH));
             })),
