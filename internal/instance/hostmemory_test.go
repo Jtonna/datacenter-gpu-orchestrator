@@ -112,3 +112,24 @@ func TestHostMemoryArgs_ProfileFlagsReplaceTheCluster(t *testing.T) {
 		}
 	}
 }
+
+// v87: every spelling of a stored profile's own --ctx-checkpoints and
+// --cache-ram is dropped at launch on both paths; the settings are the one
+// value, each once.
+func TestHostMemoryArgs_StoredHostFlagsAllDropped(t *testing.T) {
+	p := core.Profile{Name: "x", Kind: core.KindLlama, Model: "m.gguf", Ctx: 8192, Parallel: 1, KVQuant: "f16",
+		ExtraArgs: []string{"--temp", "0.7", "--ctx_checkpoints", "3", "-cram", "0", "--cache_ram", "256", "--cache-ram=1", "--swa-checkpoints", "2", "--no-webui"}}
+	cfg := &config.Config{Defaults: config.Defaults{ServerBin: "s", CacheRAMMiB: 2048, NodeHostCacheRAMMiB: 0, CtxCheckpoints: 32}, ModelsDir: "/models"}
+	full, err := BuildArgs(p, core.Placement{Nodes: []core.PlacedNode{{ID: "a", Addr: "192.0.2.12:50052", BudgetMiB: 1}}}, 1, OptionsFromConfig(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "s --host 127.0.0.1 --port 1 --model /models/m.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 --ctx-checkpoints 32 -lv 4 --rpc 192.0.2.12:50052 --device RPC0 --temp 0.7 --no-webui"
+	if got := strings.Join(full, " "); got != want {
+		t.Errorf("scheduler's machine:\n got %s\nwant %s", got, want)
+	}
+	want = "--n-gpu-layers 999 --fit off --jinja --cache-ram 0 --ctx-checkpoints 32 -lv 4 --temp 0.7 --no-webui"
+	if got := strings.Join(HostLaunchArgs(p, HostOptionsFromConfig(cfg)), " "); got != want {
+		t.Errorf("node:\n got %s\nwant %s", got, want)
+	}
+}

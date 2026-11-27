@@ -32,7 +32,53 @@ func TestCostAttribution(t *testing.T) {
 	if os.Getenv("POTLUCK_MEASURE") == "" {
 		t.Skip("opt-in: POTLUCK_MEASURE=1")
 	}
-	const agentsN, profilesN = 7, 315
+	c, steps := fleetCluster(t)
+	window := func(name string) {
+		for w := 1; w <= 2; w++ {
+			s0, c0, t0 := steps(), procCPU(c.cmd.Process.Pid), time.Now()
+			time.Sleep(30 * time.Second)
+			s1, c1, el := steps(), procCPU(c.cmd.Process.Pid), time.Since(t0)
+			t.Logf("COST %-10s window %d: %5.0f loop steps (%4.1f/s, %.1f rounds of %d plans), CPU %5.2f s = %.3f core (%3.0f ticks per 30 s)",
+				name, w, s1-s0, (s1-s0)/el.Seconds(), (s1-s0)/fleetProfiles, fleetProfiles, (c1 - c0).Seconds(), (c1-c0).Seconds()/el.Seconds(), (c1-c0).Seconds()*100*30/el.Seconds())
+		}
+	}
+	cases := []string{"none", "overview", "models"}
+	if v := os.Getenv("MEASURE_CASES"); v != "" {
+		cases = strings.Split(v, ",")
+	}
+	chrome := os.Getenv("MEASURE_CHROME")
+	time.Sleep(10 * time.Second) // the start settles (the first catalog, the agents' first reports)
+	for _, cs := range cases {
+		if cs == "none" {
+			window("no client")
+			continue
+		}
+		if chrome == "" {
+			t.Logf("COST %s: skipped (no MEASURE_CHROME)", cs)
+			continue
+		}
+		tab := exec.Command(chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir="+t.TempDir(),
+			"--remote-debugging-port=0", "--window-size=1536,864", c.url+"/ui/#/"+cs)
+		if err := tab.Start(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(15 * time.Second) // the open itself is not in the window
+		window("tab on " + cs)
+		tab.Process.Kill()
+		tab.Wait()
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// fleetAgents and fleetProfiles are the owner's fleet's shape.
+const fleetAgents, fleetProfiles = 7, 315
+
+// fleetCluster is the real llm-scheduler with fleetProfiles profiles and
+// fleetAgents fake agents heartbeating every 2 s with a stats object and
+// memory that moves every 0.5 s; steps reads GET /api/system loop.steps.
+func fleetCluster(t *testing.T) (*cluster, func() float64) {
+	t.Helper()
+	const agentsN, profilesN = fleetAgents, fleetProfiles
 	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
 	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: agentproto.Release,
 		Llama: "a01665d30de2885879a64eae999067ef3ef5fd4b",
@@ -103,39 +149,5 @@ func TestCostAttribution(t *testing.T) {
 	steps := func() float64 {
 		return c.jsonGet("/api/system")["loop"].(map[string]any)["steps"].(float64)
 	}
-	window := func(name string) {
-		for w := 1; w <= 2; w++ {
-			s0, c0, t0 := steps(), procCPU(c.cmd.Process.Pid), time.Now()
-			time.Sleep(30 * time.Second)
-			s1, c1, el := steps(), procCPU(c.cmd.Process.Pid), time.Since(t0)
-			t.Logf("COST %-10s window %d: %5.0f loop steps (%4.1f/s, %.1f rounds of %d plans), CPU %5.2f s = %.3f core (%3.0f ticks per 30 s)",
-				name, w, s1-s0, (s1-s0)/el.Seconds(), (s1-s0)/profilesN, profilesN, (c1 - c0).Seconds(), (c1-c0).Seconds()/el.Seconds(), (c1-c0).Seconds()*100*30/el.Seconds())
-		}
-	}
-	cases := []string{"none", "overview", "models"}
-	if v := os.Getenv("MEASURE_CASES"); v != "" {
-		cases = strings.Split(v, ",")
-	}
-	chrome := os.Getenv("MEASURE_CHROME")
-	time.Sleep(10 * time.Second) // the start settles (the first catalog, the agents' first reports)
-	for _, cs := range cases {
-		if cs == "none" {
-			window("no client")
-			continue
-		}
-		if chrome == "" {
-			t.Logf("COST %s: skipped (no MEASURE_CHROME)", cs)
-			continue
-		}
-		tab := exec.Command(chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir="+t.TempDir(),
-			"--remote-debugging-port=0", "--window-size=1536,864", c.url+"/ui/#/"+cs)
-		if err := tab.Start(); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(15 * time.Second) // the open itself is not in the window
-		window("tab on " + cs)
-		tab.Process.Kill()
-		tab.Wait()
-		time.Sleep(5 * time.Second)
-	}
+	return c, steps
 }

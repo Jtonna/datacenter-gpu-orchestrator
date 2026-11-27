@@ -90,7 +90,18 @@ export function needCatalog(opts) {
   if (first) first.then(go); else go();
 }
 // a server without the models topic (an older build): REST after every reconnect
-on('hello', hello => { if (hello && !(hello.topics || []).includes('models')) pull(); });
+// A new server (it restarted: another started_at) numbers its catalog from
+// its own start: the copy's version belongs to the old one, so the new
+// server's full list is taken whatever its version, and its changes apply.
+// (Kept, the old version made every change read the whole catalog again
+// over REST, a round of every plan on the server each time.)
+let server = null;
+on('hello', hello => {
+  const at = hello && hello.started_at != null ? hello.started_at : null;
+  if (server !== null && at !== server) catalog.version = -1;
+  server = at;
+  if (hello && !(hello.topics || []).includes('models')) pull();
+});
 // a configuration change always ends in a new catalog over the channel; when
 // the channel is down the next open asks again
 on('conn', c => { if (c !== 'live') asked = false; });

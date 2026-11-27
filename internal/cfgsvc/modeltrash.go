@@ -68,7 +68,24 @@ func (s *Service) RemoveProfiles(ctx context.Context, o WriteOpts, ids []string)
 // AddProfiles adds the profiles in one revision; ErrExists when an id is
 // taken (the caller checks ids and aliases first and renames on request).
 func (s *Service) AddProfiles(ctx context.Context, o WriteOpts, ps map[string]*config.ProfileSpec) (*Result, error) {
-	return s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {
+	return s.addProfiles(ctx, o, ps, "")
+}
+
+// AddStoredProfiles adds back, in one revision, profiles exactly as they
+// were stored (a model restored from the trash, a delete undone): what was
+// valid as a stored profile when it was taken out is valid now (stored.go);
+// what a new write would refuse comes back as Result.Warnings, naming them
+// as what ("restored profiles"). Only the models trash calls it, with the
+// specs its record kept; no API writes through it.
+func (s *Service) AddStoredProfiles(ctx context.Context, o WriteOpts, ps map[string]*config.ProfileSpec, what string) (*Result, error) {
+	if what == "" {
+		what = "profiles put back"
+	}
+	return s.addProfiles(ctx, o, ps, what)
+}
+
+func (s *Service) addProfiles(ctx context.Context, o WriteOpts, ps map[string]*config.ProfileSpec, stored string) (*Result, error) {
+	m := mutation{fn: func(d *config.Document) error {
 		for _, id := range sortedKeys(keysOf(ps)) {
 			if _, ok := d.Profiles[id]; ok {
 				return fmt.Errorf("profile %q: %w", id, ErrExists)
@@ -77,7 +94,11 @@ func (s *Service) AddProfiles(ctx context.Context, o WriteOpts, ps map[string]*c
 			d.Profiles[id] = &c
 		}
 		return nil
-	}})
+	}}
+	if stored != "" {
+		m.stored, m.storedWhat = ps, stored
+	}
+	return s.mutate(ctx, o, m)
 }
 
 func keysOf(m map[string]*config.ProfileSpec) []string {

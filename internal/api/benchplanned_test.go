@@ -37,8 +37,8 @@ func TestPlannedSuiteIsListedButNotRun(t *testing.T) {
 
 	// The same through the MCP tools.
 	h := mcpserver.New(e.api, mcpserver.Options{Version: "test"})
-	mcpJSON(t, h, "create_suite", `{"suite":{"id":"gbe","status":"blocked","reason":"waiting for the switch"}}`)
-	o := mcpTool(t, h, "run_suite", `{"id":"gbe"}`)
+	mcpJSON(t, h, "create_suite", `{"comment":"test","suite":{"id":"gbe","status":"blocked","reason":"waiting for the switch"}}`)
+	o := mcpTool(t, h, "run_suite", `{"id":"gbe","comment":"test"}`)
 	if !o.IsError || !strings.Contains(o.Text, "waiting for the switch") {
 		t.Fatalf("run_suite: %+v", o)
 	}

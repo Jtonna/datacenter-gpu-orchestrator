@@ -397,6 +397,12 @@ type Options struct {
 	// points one at a new file is (a load of the profile is refused at plan
 	// time instead).
 	KeepModels map[string]string
+	// KeepPaths maps a profile to the model path it had as stored somewhere
+	// other than the configuration being changed (a trash record, a revision
+	// rolled back to): a profile that keeps it is not refused by the path
+	// rule (internal/modelpath), as a stored profile is not, but its file
+	// must exist (unlike KeepModels).
+	KeepPaths map[string]string
 	// ModelNote, when set, adds a sentence to the refusal of a model file
 	// that is not there (models slice 3: "it is in the trash since ...").
 	ModelNote func(model string) string
@@ -437,6 +443,10 @@ type Bench struct {
 	// trimmed (its requests and transcripts removed; the run, its steps and its
 	// measurements kept). 0, the default, is off: nothing is ever trimmed.
 	RetentionDays int
+	// NotStartable (bench_not_startable) lists benchmark and group ids that
+	// may not be started: a run of one, or of a group that holds one at any
+	// depth, is refused whole before anything starts. Empty by default.
+	NotStartable []string
 	// Benchmarks and Suites are seeded into the database at start (source "config").
 	Benchmarks []*benchspec.Benchmark
 	Suites     []*benchspec.Suite

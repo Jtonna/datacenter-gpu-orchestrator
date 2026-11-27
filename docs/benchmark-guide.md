@@ -66,7 +66,7 @@ A benchmark's report on the Benchmarks page (Runs, a run, a step) says "cold ver
 The template "Cold, reload, loaded" is a starting point, an ordinary benchmark you can edit: a cold load, the first answer, three measured requests on the loaded model, an unload, a reload from the file cache, and three requests after it. Copy it from the schema, put your profile in, and save it:
 
 ```sh
-curl -s $B/api/bench/schema | jq '.templates[] | select(.id=="cold-reload-loaded") | .benchmark | .id="gemma12b-cold" | .profile="gemma-3-12b"' | curl -s -X POST $B/api/bench/benchmarks -d @-
+curl -s $B/api/bench/schema | jq '.templates[] | select(.id=="cold-reload-loaded") | .benchmark | .id="gemma12b-cold" | .profile="gemma-3-12b" | .comment="cold load of the 12B"' | curl -s -X POST $B/api/bench/benchmarks -d @-
 ```
 
 ### Tasks (from release 0.1.8)
@@ -91,7 +91,7 @@ Store a set with `POST $B/api/bench/task-sets` (MCP `create_task_set`). A stored
 ```sh
 curl -s -X POST $B/api/bench/task-sets -d @coding-tasks.json
 curl -s -X POST $B/api/bench/benchmarks -d '{"id":"gemma12b-coding","profile":"gemma-3-12b","timeout_s":10800,
-  "phases":[{"type":"load"},{"type":"tasks","task_set":"coding","timeout_s":9000},{"type":"unload"}]}'
+  "phases":[{"type":"load"},{"type":"tasks","task_set":"coding","timeout_s":9000},{"type":"unload"}],"comment":"coding tasks on the 12B"}'
 ```
 
 Each task is sent once, in order. A task that fails (not 200) or runs out of time is recorded (`failed`, `timed_out` with whatever had arrived) and the next one is sent; when the phase's time or the step's runs out, or the run is cancelled, the rest are recorded as `not_sent`. A failed task does not fail the step. The phase result (`phases[].tasks`) has the set's id, version and hash, `total`, `sent`, `answered`, `failed` (timed-out tasks included), `timed_out`, `not_sent`, `phase_timed_out`, `thinking` (`seen` or `not_seen`), `decode_tps` and `ttft_ms` summaries over the answered tasks, and `items[]` per task: `result_id`, `task_id`, `state`, `status`, `finish_reason` (`length` means it hit max_tokens), `prompt_tokens`, `completion_tokens`, `ttft_ms`, `decode_tps`, `wall_ms`, `answer_chars`, `reasoning_chars`, `answer_sha256`, `error`. The answer texts are not in the run: they are stored apart (up to 4 MiB each) and kept as long as the run.
@@ -157,23 +157,23 @@ A suite is also called a group; `/api/bench/groups` takes the same requests as `
 A run expands the group when it is queued (at most 1000 steps) and keeps the expanded list. `GET /api/bench/groups/<id>/expand` (MCP `expand_group`) shows that list without running anything: each entry's id, name, profile, recipe and inputs. A group that another group names cannot be deleted (`409`, naming the groups).
 
 ```sh
-curl -s -X POST $B/api/bench/groups -d '{"id":"cold-loads","benchmarks":[{"benchmark":"cold-load","matrix":{"model":["gemma-3-12b-q4.gguf","qwen3-8b-q4.gguf"],"placement":["any:1","any:2","all"]}}]}'
+curl -s -X POST $B/api/bench/groups -d '{"id":"cold-loads","benchmarks":[{"benchmark":"cold-load","matrix":{"model":["gemma-3-12b-q4.gguf","qwen3-8b-q4.gguf"],"placement":["any:1","any:2","all"]}}],"comment":"cold loads on 1, 2 and all zones"}'
 ```
 
 ## 3. Create benchmarks and suites
 
-REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
+REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. Every create, update and delete needs a comment: `"comment"` in the body (taken out, not stored with the definition) or the `X-Comment` header; without one the answer is 400 and nothing is written. The MCP tools take `comment` as a required argument. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
 
 A load-only benchmark, the cleanest way to compare nodes or links:
 
 ```sh
-curl -s -X POST $B/api/bench/benchmarks -d '{"id":"gemma12b-load-1","profile":"gemma-3-12b","phases":[{"type":"load"},{"type":"unload"}],"expect":{"max_load_s":120}}'
+curl -s -X POST $B/api/bench/benchmarks -d '{"id":"gemma12b-load-1","profile":"gemma-3-12b","phases":[{"type":"load"},{"type":"unload"}],"expect":{"max_load_s":120},"comment":"load check"}'
 ```
 
 A suite of benchmarks, 10 s apart:
 
 ```sh
-curl -s -X POST $B/api/bench/suites -d '{"id":"gemma-scaling","benchmarks":["gemma12b-load-1"],"cooldown_s":10}'
+curl -s -X POST $B/api/bench/suites -d '{"id":"gemma-scaling","benchmarks":["gemma12b-load-1"],"cooldown_s":10,"comment":"scaling check"}'
 ```
 
 Suite options: `cooldown_s` (pause between benchmarks), `stop_on_failure`, `only_when_idle` (default true), `idle_wait_s` (default 600), `evict_others` (default false: see Run), `schedule` (`{"at":"03:00"}` in the container's local time, normally UTC, or `{"every":"24h"}`).
@@ -185,7 +185,7 @@ Unknown profiles, bad ids and unknown fields are refused with `400` or `422` and
 ## 4. Run
 
 ```sh
-curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the firmware update"}'
+curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the firmware update","comment":"after the firmware update"}'
 ```
 
 MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The answer is the queued run. Runs go one at a time; others queue.
@@ -193,14 +193,14 @@ MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The 
 **One benchmark on its own.** A benchmark can also be run without a suite:
 
 ```sh
-curl -s -X POST $B/api/bench/benchmarks/gemma12b-load-1/run -d '{"note":"after the firmware update"}'
+curl -s -X POST $B/api/bench/benchmarks/gemma12b-load-1/run -d '{"note":"after the firmware update","comment":"after the firmware update"}'
 ```
 
 MCP: `run_benchmark` with `id`, optional `baseline`, `note`, `only_when_idle` (default true), `idle_wait_s` (default 600), `evict_others` (default false) and, for a recipe, `inputs` (for example `{"inputs":{"model":"gemma-3-12b-q4.gguf","placement":"any:2"}}`). A recipe without a model, or inputs on a benchmark with a fixed profile, is refused with `422`. It is an ordinary run with one step and `kind: "benchmark"`, `benchmark_id` naming the benchmark, an empty `suite_id` and the benchmark's title as `suite_name`. Its default baseline is the benchmark's previous completed direct run. Every other run has `kind: "suite"` (older runs read the same way). `GET /api/bench/runs?kind=benchmark&benchmark=<id>` lists the direct runs; `?benchmark=<id>` alone lists every run with a step of it. The suite aggregates leave direct runs out; the benchmark aggregates count them.
 
 - **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` (a suite option, or `{"evict_others": true}` in the body of `POST /api/bench/suites/<id>/run` for that run only) the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
 - **Clean-up.** A benchmark that does not end ready (a failed phase, its `timeout_s`, a cancel) ends with a forced unload of its profile before the next benchmark starts, after up to 3 s for its last request to be counted as ended. An `unload` phase (or the unload before a load) that the scheduler refuses because a request is still in flight is tried again for those 3 s: the scheduler counts a request's end a moment after the answer has arrived. A request that really stays in flight still makes it fail. A benchmark that ends ready keeps what it left loaded on purpose until the end of the run.
-- **Cancel.** `POST $B/api/bench/runs/<id>/cancel` (MCP `cancel_run`) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
+- **Cancel.** `POST $B/api/bench/runs/<id>/cancel` with `{"comment":"why"}` (MCP `cancel_run`, `comment` required) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
 - **Progress.** `GET $B/api/bench/state` (MCP `get_bench_state`): the run's percent, elapsed and estimated seconds left (`null` until the benchmarks have run once), the benchmark and phase in flight with its own percent, the next benchmark and the queue. The same object arrives on `/ws` as `bench` messages with `kind: "progress"`.
 - **Run limit.** A run that takes longer than `bench_max_run_minutes` (YAML `bench: {max_run_minutes: ...}`, default 720, 12 hours; a Full pass takes 6 to 7) is stopped and marked failed. The setting is read when each run starts; a stored value is kept.
 - **Scheduler restart.** A run that was running is marked `failed (interrupted)` at the next start; a queued one is `cancelled`.

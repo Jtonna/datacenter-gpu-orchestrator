@@ -9,8 +9,11 @@
 //   #/benchmarks/runs[?kind&result&model&suite&page]   the runs
 //   #/benchmarks/runs/<number or id>    the runs with a run's panel
 //   #/benchmarks/runs/<number>/<slug>   the runs with a benchmark's report
+//   #/benchmarks/new[/<template>|/copy?from=<id>|/empty]   a new benchmark (bench/edit.js)
+//   #/benchmarks/benchmark/<id>/edit    the benchmark editor
+//   #/benchmarks/group/new, group/<id>/edit   the group editor
 // The classic addresses still open something sensible: suite/<id> is the
-// group's panel; benchmark/<id>, trends, external/..., edit/... the list.
+// group's panel; benchmark/<id> (not .../edit), trends, external/..., edit/... the list.
 //
 // Reads: GET /api/bench/state (seed; then the "bench" topic through the
 // store), /groups, /benchmarks, /runs, /runs/<ref>, /runs/<id>/report,
@@ -25,10 +28,12 @@ import { liveView, empty, skeleton } from '../core/ui.js';
 import { num, DASH } from '../core/format.js';
 import { staleBanner } from '../core/status.js';
 import { needCatalog, onCatalog } from '../core/catalog.js';
-import { bench, onBench, loadLists, seedState, activeRun, when, tookS, resultIcon, dots, inputsLine, notYet, WHY } from './bench/common.js';
+import { bench, onBench, loadLists, seedState, activeRun, when, tookS, resultIcon, dots, inputsLine } from './bench/common.js';
 import { listColumn, groupPanel, runningRow, kindIcon } from './bench/list.js';
+import { runDialog } from './bench/run.js';
 import { resultsData, loadResults, latestTable, latestHead } from './bench/results.js';
 import { runsData, loadRuns, runsColumn, runPanel, reportPanel, directLine } from './bench/runs.js';
+import { editorRoute, openEditor } from './bench/edit.js';
 import { dur } from '../core/format.js';
 import './bench/live.js';
 
@@ -48,12 +53,15 @@ function recentRow(rn) {
     h('span.mut.bp-took', tookS(rn) != null ? dur(tookS(rn)) : DASH));
 }
 
+// "Run a benchmark": the run dialog, asking first what to run.
+const runABenchmark = () => h('button.btn.pri', { type: 'button', 'data-act': 'run-a-benchmark', onclick: () => runDialog({ pick: true }) }, 'Run a benchmark');
+
 function overview(ov, res) {
   const run = activeRun();
   return [
     h('h1.sr', 'Benchmarks'),
-    run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run) }))
-      : h('div.bp-tools', h('span.grow'), notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run)),
+    run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: runABenchmark() }))
+      : h('div.bp-tools', h('span.grow'), runABenchmark()),
     h('section.card.bp-latest', { 'aria-label': 'Latest result for each model' },
       h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), latestHead(res)),
       latestTable(res)),
@@ -67,7 +75,7 @@ function overview(ov, res) {
 
 // ---------- the view ----------
 
-const pageOf = r => (r.rest[0] === 'runs' ? 'runs' : ['all', 'suite', 'benchmark', 'edit', 'external', 'trends'].includes(r.rest[0]) ? 'all' : 'overview');
+const pageOf = r => (r.rest[0] === 'runs' ? 'runs' : ['all', 'suite', 'benchmark', 'edit', 'external', 'trends', 'new', 'group'].includes(r.rest[0]) ? 'all' : 'overview');
 
 registerView({
   id: 'benchmarks', title: 'Benchmarks',
@@ -75,7 +83,7 @@ registerView({
     let r = route, alive = true, side = null, query = route.query.q || '';
     // old addresses: suite/<id> -> all/<id>; the other classic pages -> the list
     if (r.rest[0] === 'suite' && r.rest[1]) { navigate('benchmarks', ['all', r.rest[1]], {}, true); }
-    else if (['benchmark', 'edit', 'external', 'trends'].includes(r.rest[0])) { navigate('benchmarks', ['all'], {}, true); }
+    else if (['benchmark', 'edit', 'external', 'trends'].includes(r.rest[0]) && !editorRoute(r)) { navigate('benchmarks', ['all'], {}, true); }
     const ov = { runs: null, total: null, err: '' };
     const rd = runsData();
     // the results per model (Overview table, the Runs page's views): read on
@@ -87,6 +95,13 @@ registerView({
       if (alive) view.refresh();
     };
     const closeSide = () => { if (side) { const s = side; side = null; s.close(); } };
+    // the editors (bench/edit.js): one page at a time, kept while its address stays
+    let ed = null;
+    const syncEditor = () => {
+      const er = editorRoute(r);
+      if (ed && (!er || er.key !== ed.key)) { ed.close(); ed = null; }
+      if (er && !ed) ed = openEditor(er, r);
+    };
     const syncSide = () => {
       const pg = pageOf(r);
       let want = '', make = null;
@@ -104,13 +119,14 @@ registerView({
       closeSide();
       side = make();
     };
-    const offBench = onBench(() => { if (alive) { view.refresh(); if (side) side.redraw(); } });
+    const offBench = onBench(() => { if (alive) { view.refresh(); if (side) side.redraw(); if (ed) ed.redraw(); } });
     const offCatalog = onCatalog(() => { if (alive) { view.refresh(); if (side) side.redraw(); } });
     const setQ = v => { query = v; view.refresh(); };
     const render = () => {
       const pg = pageOf(r);
       if (bench.off) return [h('h1.sr', 'Benchmarks'), h('section.card', empty('Benchmarks are off', bench.off))];
       if (pg === 'overview') return [staleBanner(), overview(ov, res)];
+      if (ed) return [h('h1.sr', ed.key === 'start' ? 'New benchmark' : 'Editor'), staleBanner(), h('div.ed-page', ed.el)];
       if (pg === 'runs') {
         loadRuns(rd, r.query).then(ch => { if (ch && alive) view.refresh(); });
         // the result views' filters (From, Context) choose what the route answers
@@ -127,6 +143,8 @@ registerView({
     // drawn (the Runs page reads its own list; its result views read the
     // results in render, with their filters)
     if (pageOf(r) === 'overview') { loadOverview(); readResults(); }
+    syncEditor();
+    if (ed) view.refresh();
     syncSide();
     return {
       update(nr) {
@@ -135,10 +153,11 @@ registerView({
         if (pageOf(r) === 'overview' && was !== 'overview') { loadOverview(); readResults(); }
         if (pageOf(r) === 'runs' && r.query.show && was !== 'runs') readResults();
         if (pageOf(r) === 'all') loadLists();
+        syncEditor();
         syncSide();
         view.refresh();
       },
-      unmount() { alive = false; offBench(); offCatalog(); closeSide(); view.unmount(); },
+      unmount() { alive = false; offBench(); offCatalog(); closeSide(); if (ed) { ed.close(); ed = null; } view.unmount(); },
     };
   },
 });

@@ -33,10 +33,11 @@ import { num, plural } from '../../core/format.js';
 import { refreshCatalog } from '../../core/catalog.js';
 
 const ctxText = c => (c % 1024 === 0 ? c / 1024 + 'k' : num(c));
-const SOURCE = { 'measured for this shape': 'measured for this shape', derived: 'derived from another context', estimate: 'estimate from the file', unknown: 'not known' };
+const SOURCE = { 'measured for this shape': 'measured for this shape', derived: 'derived from other contexts of this model', estimate: 'estimate from the file', unknown: 'not known' };
 // the row's state as a badge: label, tone, title
 const FIT = {
-  fits: ['Fits', 'ready', 'It fits with nothing else loaded, by a measured or derived need'],
+  fits: ['Fits', 'ready', 'It fits with nothing else loaded, by a need measured for this shape'],
+  'fits-derived': ['Fits, derived', 'ready', 'It fits with nothing else loaded, by a need derived from other contexts of this model'],
   'fits-by-estimate': ['Fits, estimated', 'ready', 'Not measured: by the file estimate it fits with nothing else loaded'],
   'estimate-does-not-fit': ['Not measured', 'load', 'Not measured: by the file estimate it does not fit. Not written unless ticked'],
   'does-not-fit': ['Not kept', 'fail', 'By a measured or derived need it does not fit even with nothing loaded'],
@@ -60,6 +61,7 @@ function rowsTable(set, ticks, onTick) {
       const notes = [
         r.reason ? h('div', { 'data-why': r.state }, h('b', why), r.reason) : null,
         r.need_note ? h('div', { 'data-need-note': '' }, r.need_note) : null,
+        r.zones_need_note ? h('div', { 'data-zones-need-note': '' }, h('b', 'Two figures: '), r.zones_need_note) : null,
         r.shape_note ? h('div', { 'data-shape-note': '' }, r.shape_note) : null,
         r.uses_every_zone ? h('div.warn-t', { 'data-every-zone': r.zones_may_use_by_max_pool ? 'max-pool' : 'reachable' }, r.every_zone_note) : null,
         r.now_note ? h('div', { 'data-now': r.action }, h('b', 'Now: '), r.now_note) : null,

@@ -112,9 +112,11 @@ func TestUINextRunDetailInRateAfterReuse(t *testing.T) {
 	}})
 }
 
-// The server's short_name wins (on the row, else on the catalog entry), with
-// the row's ctx; "-it" stays when dropping it would give two files of the
-// catalog one short name. The full file name stays on hover.
+// The model's short name beside the profile's name: the server's short_name
+// wins (on the row, else on the catalog entry); "-it" stays when dropping it
+// would give two files of the catalog one short name. The full file name
+// stays on hover. No ctx: since the reviewer's ruling of 26 Nov the cell
+// names the profile, not "<model>:<ctx>".
 func TestUINextRunsModelShortNameFromServer(t *testing.T) {
 	now := time.Now()
 	rows := ovRequests(now)
@@ -126,17 +128,19 @@ func TestUINextRunsModelShortNameFromServer(t *testing.T) {
 	}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "short name: server and clash", "route": "#/requests", "status": ovStatus(now),
-			"expect": []string{"server-short:16k", "gemma-4-27b-it:32k", "gemma-4-27b:8k"},
+			"expect": []string{"alpha · server-short", "alpha · gemma-4-27b-it", "beta · gemma-4-27b"},
+			"absent": []string{":16k", ":32k", ":8k"},
 			"has":    []string{"td.mono[title*='Gemma-4-27B-it-Q4_K_M.gguf']"}},
 	}})
 }
 
-// (e) The Model column: the model's short name and context, as the design
-// ("gemma-4-27b:32k"), with the profile id on hover. The API has no short
-// name, so it is the model file's name (GET /api/models: the entry of the
-// row's profile; else the row's model_file) without the directory, the
-// .gguf extension and the quantisation, in lower case, and the profile's
-// ctx in k. A profile the catalog does not know keeps its id.
+// (e) The Model column: the profile's shown name with the model's short name
+// beside it ("alpha · gemma-4-27b"; the reviewer's ruling of 26 Nov replaced
+// the design's "gemma-4-27b:32k"), the profile id and file on hover. With no
+// short_name from the server it is the model file's name (the catalog entry
+// of the row's profile) without the directory, the .gguf extension and the
+// quantisation, in lower case. A profile the catalog does not have keeps its
+// id, with "profile no longer exists".
 func TestUINextRunsModelShortName(t *testing.T) {
 	now := time.Now()
 	rows := ovRequests(now)
@@ -151,8 +155,8 @@ func TestUINextRunsModelShortName(t *testing.T) {
 	for _, route := range []string{"#/overview", "#/requests"} {
 		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 			map[string]any{"name": "model: " + route, "route": route, "status": ovStatus(now),
-				"expect": []string{"gemma-4-27b:32k", "gemma-4-27b:8k", "mistral-small-3.1-24b", "unknown-profile"},
-				"absent": []string{"Q4_K_M", "q4_k_m", ".gguf", "mistral-small-3.1-24b:", "gemma-4-27b-it"},
+				"expect": []string{"alpha · gemma-4-27b", "beta · gemma-4-27b", "delta · profile no longer exists", "unknown-profile · profile no longer exists"},
+				"absent": []string{"Q4_K_M", "q4_k_m", ".gguf", "gemma-4-27b:", "gemma-4-27b-it"},
 				"has":    []string{"tr[data-req='14'] td.mono[title^=alpha]", "tr[data-req='16'] td.mono[title^=beta]"}},
 		}})
 	}
@@ -171,10 +175,12 @@ func TestUINextRunsModelVendorWord(t *testing.T) {
 	fetch := ovFetch(now, rows, true)
 	fetch["/api/models"] = map[string]any{"version": 1, "models": []any{
 		map[string]any{"key": "qwen", "kind": "llama", "file": "/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf", "profiles": []any{map[string]any{"id": "alpha", "ctx": 32768}}},
+		map[string]any{"key": "ds", "kind": "llama", "file": "/models/DEEPSEEK_DeepSeek-R1-Distill-Q4_K_M.gguf", "profiles": []any{map[string]any{"id": "delta", "ctx": 8192}}},
+		map[string]any{"key": "gg", "kind": "llama", "file": "/models/google_gemma-3-4b-it-Q4_0.gguf", "profiles": []any{map[string]any{"id": "eps", "ctx": 8192}}},
 	}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "vendor word", "route": "#/requests", "status": ovStatus(now),
-			"expect": []string{"qwen3.5-9b:32k", "deepseek-r1-distill", "google_gemma-3-4b"},
+			"expect": []string{"alpha · qwen3.5-9b", "delta · deepseek-r1-distill", "eps · google_gemma-3-4b"},
 			"absent": []string{"qwen_qwen", "deepseek_deepseek"},
 			"titles": []string{"alpha · Qwen_Qwen3.5-9B-Q4_K_M.gguf", "delta · DEEPSEEK_DeepSeek-R1-Distill-Q4_K_M.gguf"}},
 	}})

@@ -329,8 +329,16 @@ func TestUINotJudgedScreens(t *testing.T) {
 	if st, b, _ := e.do("POST", "/api/bench/suites", `{"id":"s","name":"Forced suite","benchmarks":["fx-bench"],"cooldown_s":0,"only_when_idle":false}`); st != 201 {
 		t.Fatalf("%d %s", st, b)
 	}
-	_, b, _ := e.do("POST", "/api/bench/suites/s/run", "")
-	id := jsonOf(t, b)["id"].(string)
+	// The start gate refuses this run up front (excluded_zone) since run and
+	// cancel from the pages; a step is still refused by an exclusion when the
+	// exclusion lands after the run was queued, which is what this draws: the
+	// run is queued past the gate, as one queued before the exclusion was.
+	e.api.opts.Bench.SetStartGate(nil)
+	queued, err := e.api.opts.Bench.Enqueue("s", bench.EnqueueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := queued.ID
 	var run map[string]any
 	eventually(t, "run completed", func() bool {
 		_, b, _ := e.do("GET", "/api/bench/runs/"+id, "")

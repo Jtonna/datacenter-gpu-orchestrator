@@ -212,6 +212,14 @@ func applyFacts(r *Run, steps []*factStep) {
 	if r.Kind == RunKindBenchmark {
 		r.Inputs = directInputs(first, steps)
 	}
+	if r.StartedBy == "" && r.StartComment == "" && len(r.Suite) > 0 {
+		var p struct {
+			Start *StartInfo `json:"start"`
+		}
+		if json.Unmarshal(r.Suite, &p) == nil && p.Start != nil {
+			r.StartedBy, r.StartComment = p.Start.By, p.Start.Comment
+		}
+	}
 }
 
 func runResult(r *Run, c *RunCounts) string {

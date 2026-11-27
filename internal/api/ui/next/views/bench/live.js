@@ -27,7 +27,7 @@ function update() {
   const pct = Math.max(0, Math.min(100, run.percent || 0));
   const of = run.steps_total ? `${num(run.current ? (run.current.index || 0) + 1 : run.steps_done || 0)} of ${num(run.steps_total)}` : '';
   morph(card, [
-    h('span.run-ind-t', h('span', { class: 'dot pulse ' + (run.state === 'paused' ? 'off' : 'warn') }), h('b', run.suite_name || run.suite_id), of ? h('span.mono', of) : null),
+    h('span.run-ind-t', h('span', { class: 'dot pulse ' + (run.state === 'paused' ? 'off' : 'warn') }), h('b', run.suite_name || run.suite_id), of ? h('span.mono.run-ind-of', of) : null),
     bar([{ cls: 'a', value: pct }], 100, `${Math.round(pct)} percent of the run is done`, 'sm'),
     h('span.mut', run.state === 'paused' ? 'waiting until the zones are idle' : run.eta_s != null ? `about ${dur(run.eta_s)} left` : 'running'),
   ]);

@@ -57,6 +57,7 @@ func benchEnvChat(t *testing.T, chatH http.HandlerFunc) *env {
 	m.Start(ctx)
 	t.Cleanup(func() { cancel(); m.Stop(context.Background()) })
 	e.api.opts.Bench, e.api.opts.BenchStore = m, store
+	e.api.opts.benchLocalOK = true // the test fleet is the scheduler's own machine
 	return e
 }
 

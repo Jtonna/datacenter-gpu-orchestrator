@@ -97,6 +97,10 @@ type Scheduler struct {
 	opts Options
 	core *schedCore
 
+	// dryPlans counts the dry-run plans asked of the loop (Plan), from any
+	// caller: one step of the loop each
+	dryPlans atomic.Int64
+
 	events   chan event
 	tick     chan struct{}
 	started  atomic.Bool
@@ -809,6 +813,16 @@ func (s *Scheduler) CancelQueued(ctx context.Context, profiles []string) (int, e
 	return ask(s, ctx, func(c *schedCore) int { return c.cancelQueued(profiles) })
 }
 
+// DropBenchLoads withdraws the loads benchmark run run sent for model that
+// still wait in the queue (dropBenchLoads); the number withdrawn.
+func (s *Scheduler) DropBenchLoads(ctx context.Context, model, run string) (int, error) {
+	p, _, ok := s.resolve(model)
+	if !ok {
+		return 0, errUnknown(model)
+	}
+	return ask(s, ctx, func(c *schedCore) int { return c.dropBenchLoads(p.Name, run) })
+}
+
 // Drain is POST /api/models/drain/{model}: the instance admits nothing
 // new and stops once its runs finish (drain.go); the answer is the ETA in
 // seconds (nil: idle and stopped now, or no run length known yet).
@@ -854,11 +868,15 @@ func (s *Scheduler) Status(ctx context.Context) (Status, error) {
 
 // Plan is POST /api/plan: what a request for model would meet now. It
 // changes nothing.
+// DryPlans is how many dry-run plans were asked of the loop so far.
+func (s *Scheduler) DryPlans() int64 { return s.dryPlans.Load() }
+
 func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) {
 	p, alias, ok := s.resolve(model)
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
+	s.dryPlans.Add(1)
 	r, err := askRead(s, ctx, "plan of "+p.Name, func(c *schedCore) PlanReport { return c.dryPlan(p.Name) })
 	if err != nil {
 		return PlanReport{}, err

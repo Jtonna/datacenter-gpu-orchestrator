@@ -501,6 +501,11 @@ func (c *Config) validateBench(add func(string, ...any)) {
 	if b.RetentionDays < 0 || b.RetentionDays > MaxBenchRetentionDays {
 		add("bench.retention_days must be 0 (off) to %d, got %d", MaxBenchRetentionDays, b.RetentionDays)
 	}
+	for i, id := range b.NotStartable {
+		if strings.TrimSpace(id) == "" {
+			add("bench_not_startable: entry %d is empty", i)
+		}
+	}
 	profileOK := func(id string) bool { _, _, ok := c.Resolve(id); return ok }
 	byID := map[string]*benchspec.Benchmark{}
 	for i, bm := range b.Benchmarks {

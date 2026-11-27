@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -222,6 +223,9 @@ func (s *Server) listBenchmarks(w http.ResponseWriter, r *http.Request) {
 		if u := uses[all[i].Spec.ID]; u != nil {
 			m["last_use"] = u
 		}
+		if why := s.notStartableWhy(all[i].Spec.ID, nil); why != "" {
+			m["not_startable"] = why
+		}
 		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"benchmarks": out})
@@ -260,7 +264,7 @@ func (s *Server) benchmarkResults(w http.ResponseWriter, r *http.Request) {
 // parseBenchmark decodes and validates a benchmark body; wantID, when not
 // empty, is the id the path names.
 func (s *Server) parseBenchmark(w http.ResponseWriter, r *http.Request, wantID string) (*benchspec.Benchmark, bool) {
-	body, ok := readBody(w, r)
+	body, ok := saveBody(w, r)
 	if !ok {
 		return nil, false
 	}
@@ -278,7 +282,7 @@ func (s *Server) parseBenchmark(w http.ResponseWriter, r *http.Request, wantID s
 		}
 	}
 	if err := b.Validate(s.profileOK); err != nil {
-		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
+		refuseSave(w, err)
 		return nil, false
 	}
 	for _, id := range b.Parallel {
@@ -340,6 +344,10 @@ func (s *Server) putBenchmark(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteBenchmark(w http.ResponseWriter, r *http.Request) {
+	// a delete needs a comment, as a save does (body {"comment"} or X-Comment)
+	if _, ok := saveBody(w, r); !ok {
+		return
+	}
 	id := r.PathValue("id")
 	old, err := s.opts.BenchStore.GetBenchmark(id)
 	if err != nil {
@@ -374,7 +382,11 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		if runs, err := s.opts.BenchStore.ListRuns(bench.RunFilter{Suite: all[i].Spec.ID, Limit: 1}); err == nil && len(runs) > 0 {
 			m["last_run"] = runs[0]
 		}
-		if flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup); err == nil {
+		flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup)
+		if why := s.notStartableWhy(all[i].Spec.ID, flat); why != "" {
+			m["not_startable"] = why
+		}
+		if err == nil {
 			m["expanded_count"] = len(flat.Benchmarks)
 			if n, ok := s.groupTaskCount(flat); ok {
 				m["task_count"] = n
@@ -434,7 +446,7 @@ func (s *Server) getSuite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID string) (*benchspec.Suite, bool) {
-	body, ok := readBody(w, r)
+	body, ok := saveBody(w, r)
 	if !ok {
 		return nil, false
 	}
@@ -452,7 +464,7 @@ func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID strin
 		}
 	}
 	if err := su.ValidateGroup(s.profileOK, s.lookup, s.groupLookup); err != nil {
-		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
+		refuseSave(w, err)
 		return nil, false
 	}
 	for i, it := range su.Benchmarks {
@@ -503,6 +515,10 @@ func (s *Server) putSuite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSuite(w http.ResponseWriter, r *http.Request) {
+	// a delete needs a comment, as a save does (body {"comment"} or X-Comment)
+	if _, ok := saveBody(w, r); !ok {
+		return
+	}
 	id := r.PathValue("id")
 	old, _ := s.opts.BenchStore.GetSuite(id)
 	if in, _ := s.opts.BenchStore.GroupsUsing(id); len(in) > 0 {
@@ -519,33 +535,9 @@ func (s *Server) deleteSuite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
+// runSuite is POST /api/bench/suites/{id}/run and /groups/{id}/run (benchstart.go).
 func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
-	if s.shuttingDown(w) {
-		return
-	}
-	var req struct {
-		Baseline    string `json:"baseline"`
-		Note        string `json:"note"`
-		EvictOthers *bool  `json:"evict_others"`
-	}
-	body, ok := readBody(w, r)
-	if !ok {
-		return
-	}
-	if len(strings.TrimSpace(string(body))) > 0 {
-		if err := benchspec.DecodeStrict(body, &req); err != nil {
-			apiErr(w, http.StatusBadRequest, "the body must be empty or {\"baseline\": \"<run id>\", \"note\": \"...\", \"evict_others\": true}: %v", err)
-			return
-		}
-	}
-	run, err := s.opts.Bench.Enqueue(r.PathValue("id"), bench.EnqueueOptions{Baseline: req.Baseline, Note: req.Note, EvictOthers: req.EvictOthers})
-	if err != nil {
-		s.storeErr(w, err)
-		return
-	}
-	w.Header().Set("Location", "/api/bench/runs/"+run.ID)
-	s.audit(r, "run_start", "suite:"+r.PathValue("id"), nil, map[string]any{"run_id": run.ID, "baseline": req.Baseline, "note": req.Note})
-	writeJSON(w, http.StatusAccepted, run)
+	s.startRun(w, r, bench.RunKindSuite)
 }
 
 // ---- runs ----
@@ -626,7 +618,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusOK, runOut{Run: run, DefinitionsChanged: s.definitionsChanged(run)})
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
@@ -635,7 +627,28 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	if run, err := s.opts.BenchStore.GetRun(id); err == nil {
 		before = map[string]any{"run_id": id, "suite_id": run.SuiteID, "state": run.State}
 	}
-	if err := s.opts.Bench.Cancel(id); err != nil {
+	comment := ""
+	if body, ok := readBody(w, r); !ok {
+		return
+	} else if len(strings.TrimSpace(string(body))) > 0 {
+		var req struct {
+			Comment string `json:"comment"`
+		}
+		if err := benchspec.DecodeStrict(body, &req); err != nil {
+			apiErr(w, http.StatusBadRequest, "the body must be empty or {\"comment\": \"why\"}: %v", err)
+			return
+		}
+		comment = strings.TrimSpace(req.Comment)
+	}
+	if comment == "" {
+		comment = audit.FromRequest(r).Comment
+	}
+	if comment == "" {
+		apiErr(w, http.StatusBadRequest, commentRequired)
+		return
+	}
+	r.Header.Set("X-Comment", comment) // the audit entry carries it
+	if err := s.opts.Bench.CancelBy(id, audit.FromRequest(r).Actor, comment); err != nil {
 		if errors.Is(err, bench.ErrInvalid) {
 			apiErr(w, http.StatusConflict, "%v", strings.TrimPrefix(err.Error(), "invalid: "))
 			return
@@ -643,7 +656,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err)
 		return
 	}
-	s.audit(r, "run_cancel", "run:"+id, before, map[string]any{"cancelling": id})
+	s.audit(r, "run_cancel", "run:"+id, before, map[string]any{"cancelling": id, "comment": comment})
 	writeJSON(w, http.StatusAccepted, map[string]any{"cancelling": id, "note": "a running run stops after its current request and unloads what it loaded"})
 }
 
@@ -851,6 +864,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	// and failures (the About page's "Background tasks" card).
 	out["tasks"] = supervise.Stats()
 	out["internal_failures_total"] = supervise.Total()
+	// the process's own memory (heap, goroutines, garbage collection), read
+	// at most once per runtimeEvery (sysruntime.go)
+	out["runtime"] = s.rt.figures(time.Now())
 	if sv := s.opts.Config; sv != nil {
 		// fields of the stored configuration this version does not know (a
 		// newer version wrote them): writes are refused unless forced
