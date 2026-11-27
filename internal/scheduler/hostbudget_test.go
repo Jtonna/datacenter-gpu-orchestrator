@@ -66,6 +66,9 @@ func budgetFleet(t *testing.T, mem int, extra ...string) *harness {
 	h.llama(gemmaP2, 6000, on("ps5-3", func(p *core.Profile) { p.Parallel = 2 }))
 	h.llama(qwen, 3000, on("ps5-4"))
 	h.llama(plain, 3000, on("ps5-3"))
+	// the flip tests are about counting every profile (count_host_memory
+	// on); hostoptin_test.go covers the default, opt-in per profile
+	h.cfg.Defaults.CountHostMemory = true
 	h.viewChanged()
 	if mem > 0 {
 		h.memAvailable(mem)
@@ -255,6 +258,7 @@ func TestHostBudget_FlipD_ReleasedAtUnload(t *testing.T) {
 func TestHostBudget_FlipE_ConsoleHostedUnchanged(t *testing.T) {
 	plan := func(mem int) PlanReport {
 		h := withCheckpoints(hostHarness(t))
+		h.cfg.Defaults.CountHostMemory = true // counting every profile
 		h.viewChanged()
 		if mem > 0 {
 			h.memAvailable(mem)

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
@@ -166,7 +167,7 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 	}
 	// counted against whichever machine hosts it (hostnode.go on a
 	// console, hostbudget.go on the scheduler's machine)
-	h.Counted = d.CountHostMemory
+	h.Counted = countsHostLim(d, lim)
 	if !onNode {
 		h.Machine = c.serverName()
 	}
@@ -176,10 +177,32 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 	return h, true
 }
 
+// countsHost: p's host-process memory is counted against the machine that
+// hosts it. With count_host_memory on, every profile is (its own flags,
+// else the cluster values). With it off (the default) only a profile that
+// opts in: its extra_args carry --ctx-checkpoints or --cache-ram in an
+// accepted form; its own value is used, and the cluster value for the flag
+// it does not set (config HostMemoryOf). A profile without either flag
+// counts nothing, as before p33.
+func (c *schedCore) countsHost(p *core.Profile) bool {
+	if c.cfg.Defaults.CountHostMemory {
+		return true
+	}
+	if p == nil {
+		return false
+	}
+	return countsHostLim(c.cfg.Defaults, c.cfg.HostMemoryOf(p))
+}
+
+// countsHostLim is countsHost from p's effective figures.
+func countsHostLim(d config.Defaults, lim config.HostMemoryLimits) bool {
+	return d.CountHostMemory || lim.CtxCheckpointsFrom == config.FromProfileArgs || lim.CacheRAMFrom == config.FromProfileArgs
+}
+
 // hostTermOn is what the host-memory term adds to node id's reservation for
-// p on pl: the term on the host node when count_host_memory is on, else 0.
+// p on pl: the term on the host node when p is counted (countsHost), else 0.
 func (c *schedCore) hostTermOn(p *core.Profile, pl core.Placement, id core.NodeID) int {
-	if !c.cfg.Defaults.CountHostMemory {
+	if !c.countsHost(p) {
 		return 0
 	}
 	if h := hostOf(p, pl); h == "" || h != id {
@@ -228,9 +251,9 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 	}
 	if !hm.OnNode {
 		// counted against the machine's available memory (hostbudget.go)
-		// with count_host_memory on; "not checked" when it is unknown
+		// when p is counted (countsHost); "not checked" when it is unknown
 		placedWord := "not placed"
-		if c.cfg.Defaults.CountHostMemory {
+		if hm.Counted {
 			placedWord = "counted"
 			room, ok := r.HostRoom, r.HostRoom != nil
 			if !ok {
@@ -330,9 +353,10 @@ func (c *schedCore) nodeHostMemory() []NodeHostMemory {
 		}
 		n := by[id]
 		if n == nil {
-			n = &NodeHostMemory{Node: id, Name: c.nodeName(id), Counted: hm.Counted}
+			n = &NodeHostMemory{Node: id, Name: c.nodeName(id)}
 			by[id] = n
 		}
+		n.Counted = n.Counted || hm.Counted // any of them counted there
 		n.CheckpointsMiB += hm.CheckpointsMiB
 		n.PromptCacheMiB += hm.PromptCacheMiB
 		n.Instances = append(n.Instances, in.prof.Name)

@@ -326,8 +326,10 @@ type Defaults struct {
 	// --cache-ram for a host on a node (default 0: no prompt cache there).
 	// CtxCheckpoints is --ctx-checkpoints, per slot, on both (default 32, the
 	// server's own). CountHostMemory: the host-side need (checkpoints x the
-	// family's cell, on a host on a node) enters that node's reservation;
-	// off (the default) it is computed and shown only.
+	// family's cell plus the prompt cache) is counted against the machine
+	// that hosts it for every profile; off (the default) only for a profile
+	// whose extra_args carry --ctx-checkpoints or --cache-ram (opt-in per
+	// profile, scheduler countsHost); for the others it is shown only.
 	NodeHostCacheRAMMiB int
 	CtxCheckpoints      int
 	CountHostMemory     bool

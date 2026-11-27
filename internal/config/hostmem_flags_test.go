@@ -75,7 +75,7 @@ func TestHostMemoryOf(t *testing.T) {
 			t.Errorf("%s: %+v, want %+v", name, got, want)
 		}
 	}
-	if !c.Defaults.CountHostMemory {
-		t.Fatal("count_host_memory is off by default")
+	if c.Defaults.CountHostMemory {
+		t.Fatal("count_host_memory is on by default; off is the default (opt-in per profile)")
 	}
 }

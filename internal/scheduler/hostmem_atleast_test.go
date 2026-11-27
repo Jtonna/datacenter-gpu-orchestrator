@@ -15,6 +15,7 @@ import (
 func TestHostMemory_UnknownSizeReadsAsAFloor(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.cfg.Defaults.CacheRAMMiB, h.cfg.Defaults.NodeHostCacheRAMMiB = 2048, 512
+	h.cfg.Defaults.CountHostMemory = true // counting every profile (off counts only profiles with their own flags)
 	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: estimate.Ckpt{Family: gguf.FamilyWindowed, Unknown: true}}
 	h.llama("s", 4000)
 	h.llama("n", 4000, func(p *core.Profile) { p.Host = core.HostNode })

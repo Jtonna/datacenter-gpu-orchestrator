@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The hosting machine's memory budget (p33; the owner, 26 Nov: "same rule
@@ -157,10 +159,11 @@ func serverHosted(p *core.Profile, pl core.Placement) bool {
 
 // serverHostRoom is the budget of the scheduler's machine for p, with the
 // instances in gone left out (victims already chosen); ok is false when the
-// rule does not apply (count_host_memory off, a console host, a command
-// profile, a model whose term is not known).
+// rule does not apply (p not counted: countsHost, a console host, a command
+// profile, a model whose term is not known). A loaded instance that is not
+// counted holds nothing here.
 func (c *schedCore) serverHostRoom(p *core.Profile, gone []string) (HostRoom, bool) {
-	if !c.cfg.Defaults.CountHostMemory || p == nil || p.Kind != core.KindLlama || p.Host == core.HostNode {
+	if p == nil || !c.countsHost(p) || p.Kind != core.KindLlama || p.Host == core.HostNode {
 		return HostRoom{}, false
 	}
 	hm, ok := c.hostMemoryOf(p, false)
@@ -178,7 +181,7 @@ func (c *schedCore) serverHostRoom(p *core.Profile, gone []string) (HostRoom, bo
 			continue
 		}
 		t, ok := c.hostMemoryOf(in.prof, false)
-		if !ok || t.TermMiB() <= 0 {
+		if !ok || !t.Counted || t.TermMiB() <= 0 {
 			continue
 		}
 		h := HeldTerm{Profile: in.prof.Name, MaxMiB: t.TermMiB(), MiB: t.TermMiB(), Idle: in.state == stReady && in.inFlight == 0}
@@ -369,9 +372,10 @@ func (s *Scheduler) startLocalMemory() {
 	if read == nil {
 		return
 	}
+	// A failure restarts the reader alone: it keeps only what it last
+	// posted, and a restart posts a fresh reading at once.
 	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	supervise.Go(s.bgCtx, supervise.Spec{Name: "scheduler.local_memory", Policy: supervise.Restart, Done: s.wg.Done}, func(ctx context.Context) {
 		var last LocalMem
 		var lastProcs map[uint64]int
 		lastAt, posted := time.Time{}, false
@@ -393,7 +397,7 @@ func (s *Scheduler) startLocalMemory() {
 			}
 			now := time.Now()
 			if err != nil || !posted || moved || abs(m.AvailableMiB-last.AvailableMiB) >= localMemStep || now.Sub(lastAt) >= localMemStale/2 {
-				if !s.post(s.bgCtx, evLocalMem{mem: m, at: s.opts.Clock.Now(), err: err, procs: procs}) {
+				if !s.post(ctx, evLocalMem{mem: m, at: s.opts.Clock.Now(), err: err, procs: procs}) {
 					return
 				}
 				posted, lastAt, lastProcs = err == nil, now, procs
@@ -402,12 +406,12 @@ func (s *Scheduler) startLocalMemory() {
 				}
 			}
 			select {
-			case <-s.bgCtx.Done():
+			case <-ctx.Done():
 				return
 			case <-time.After(localMemEvery):
 			}
 		}
-	}()
+	})
 }
 
 // hostCheck is the hosting machine's rule for a load of p with the

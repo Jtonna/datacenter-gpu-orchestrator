@@ -18,6 +18,7 @@ var gemma4Cell = estimate.Ckpt{Family: gguf.FamilyWindowed, CellBytes: 335544320
 func TestHostMemory_ProvenWindowIsUpTo(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.cfg.Defaults.CacheRAMMiB, h.cfg.Defaults.CtxCheckpoints = 2048, 32
+	h.cfg.Defaults.CountHostMemory = true // counting every profile (off counts only profiles with their own flags)
 	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: gemma4Cell}
 	h.llama("g", 4000)
 	r := h.c.dryPlan("g")

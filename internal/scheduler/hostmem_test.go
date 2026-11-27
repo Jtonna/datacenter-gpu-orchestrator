@@ -47,8 +47,8 @@ func planFigures(h *harness, names ...string) map[string]hostPlanFigs {
 	return out
 }
 
-// With count_host_memory off (the way back for one release; on by
-// default from p33) the term changes no plan: the
+// With count_host_memory off (the default) and no profile carrying its own
+// flags, the term changes no plan: the
 // plans and shares of a node-hosted and a server-hosted profile are the
 // same as without any checkpoint sizer; the term is only shown.
 func TestHostMemory_DarkSettingLeavesEveryPlanUnchanged(t *testing.T) {

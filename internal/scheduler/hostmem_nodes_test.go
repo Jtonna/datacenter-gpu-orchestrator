@@ -19,6 +19,7 @@ func TestHostMemory_StatusHasEveryMachineThatHoldsIt(t *testing.T) {
 	h.viewChanged()
 	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: qwen4BCell}
 	h.cfg.Defaults.CacheRAMMiB, h.cfg.Defaults.NodeHostCacheRAMMiB, h.cfg.Defaults.CtxCheckpoints = 2048, 256, 32
+	h.cfg.Defaults.CountHostMemory = true // counting every profile (off counts only profiles with their own flags)
 	h.llama("s", 4000, func(p *core.Profile) { p.ForceNodes, p.TTL = []string{"c"}, ptrDur(0) })
 
 	st := h.c.statusDoc()
