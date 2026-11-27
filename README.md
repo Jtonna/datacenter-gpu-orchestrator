@@ -189,6 +189,76 @@ go run ./cmd/devcluster --listen 127.0.0.1:8790 --scenario demo
 
 It runs the real scheduler against simulated machines. The UI is at `http://127.0.0.1:8790/ui/`.
 
+## How a release is judged
+
+A candidate build replaces the live scheduler only after its tests and three programs have run on a **copy** of the live data folder. The programs make the copy themselves. Each database is copied with SQLite (`VACUUM INTO` from a read-only connection), so the copy is consistent even while the live scheduler writes the database. The programs live in this repository, so a gate can be run again from a clean clone at a commit. Nothing about one deployment is built in: the data folder, the models folder, the program release, the fake fleet and the builds are all flags. The examples use 192.0.2.x addresses and made-up names.
+
+The first two programs are subcommands of `potluck-gate` (`cmd/potluck-gate`). A build is a binary, or `image:NAME` for an image run with `docker run --network host`. Each program copies `--data` (and `--history`, the event history folder, when given) into its own work folder and never writes the source.
+
+1. **Readiness and crash test.** It loops configuration writes on one build while reader goroutines read the listings without a pause (`--readers`, by default three on `/api/profiles`, one on `/v1/models` and one on `/api/needs`). A cycle takes one gate profile from absent back to absent: create, change, delete. It kills the build at random moments within a write and starts it again.
+
+   ```sh
+   go build -o bin/potluck-gate ./cmd/potluck-gate
+   bin/potluck-gate crash --scheduler image:potluck:candidate --data /srv/copy/data --models /srv/models \
+       --programs /srv/programs --duration 5m --kills 40 --out gate/crash.json
+   ```
+
+   It passes when all of these hold:
+   - every read answers 200 and parses, the readers' too;
+   - every acknowledged write is stored whole, and a write cut by a kill is stored whole or not at all;
+   - the configuration revision never goes back;
+   - `/api/profiles`, `/api/config/profiles` and the model catalog list the same number of profiles;
+   - the log has no panic and no `ERROR` line. `--allow-log` names an error the caller expects;
+   - after the last stop, every database of the copy passes SQLite's integrity check.
+
+   Output: one line with the cycles, the writes, the kills, the readers' reads by kind (`listings{list models needs}`), the bad reads, the bad writes and the listing counts, plus the JSON file. Exit 0 PASS, 1 FAIL.
+
+   An earlier readiness test ran 40 seconds of create-and-delete pairs beside the same readers, with no kill and no read-back. `--duration 40s --change=false --kills 0 --verify cycle` runs the same cycles, so its figures compare with that test's.
+
+2. **Plan rows of two builds.** OLD and NEW run, one after the other, on the same copy, each with the same fake fleet (`potluck-fake-agents --nodes FILE`, built from `cmd/potluck-fake-agents`; `nodes.sample.json` shows the format).
+
+   ```sh
+   bin/potluck-gate plans --old image:potluck:live --new image:potluck:candidate --data /srv/copy/data \
+       --models /srv/models --programs /srv/programs --nodes gate/nodes.json --fake-agents bin/potluck-fake-agents --out gate/plans
+   ```
+
+   Each run dumps every profile's need and every field of its plan, including each node's memory row (`will_take_mib`, `basis`, `host_overhead_mib` and its source). It then runs OLD again on the data NEW touched, and NEW again: **the way back**. Both re-runs must match their first dumps. Each comparison prints the number of profiles whose plan differs and the rows (profile, field, old, new); `plans.json` has them all. Each run also gets one line: the build's version, the plan actions counted, the memory rows, that run's panic and `ERROR` lines, and, after its stop, the integrity check of each database with its need tables and migrations ledgers. The exit status is 0, unless `--fail-on` names what the caller expects: `old-new` (the builds plan alike), `way-back` (both re-runs equal) and `runs` (every run clean).
+
+   The nodes file can mirror a running scheduler's fleet without its addresses: `potluck-fake-agents --from-status http://192.0.2.20:3122/api/nodes --print > gate/nodes.json`.
+
+3. **Every page drawn.** `scripts/gate/pages.mjs` draws every route of the web UI of a running scheduler, at 1536 and 1280 px wide by default, as full-page PNGs. Start the candidate on a copy first. The harness never checks that the address is not live: pointing it at a copy is the caller's job.
+
+   It sends no write. Every request that is not a GET is aborted in the browser; `--allow-post /api/plan` lets a named dry-run POST through. The routes come from three places:
+   - every view of the UI: a list of its addresses, which a test checks against the views the UI registers;
+   - the detail routes built from the API's answers. These are the first hand-made profile, model, deleted model and zone, and the first three groups. Of the runs, it takes the newest, a failed one, a group's, a direct benchmark's and a pinned or noted one, with their reports. No id is fixed in the script;
+   - every link on a drawn page whose shape is new. A view of a page (`?show=`, `?tab=`) counts as a shape of its own.
+
+   Pages are drawn in a light theme, with motion reduced and animations off, in en-US and UTC, so two runs give the same pictures.
+
+   For each page it reports whether the page scrolls sideways, the squeezed texts, the overlapping texts, and the console errors. A text is squeezed when it is clipped (a clip with the full text in a `title` is counted apart). A long text is also squeezed when it wraps onto three lines or more in a box narrower than `--min-chars` characters. Screen-reader-only text is not judged.
+
+   Two texts overlap when they sit in different cells of one row and are painted over each other: their visible line boxes intersect by more than 1 px both ways. A row is a table row, or an element laid out as a grid or as a flex row; its children are the cells. Each line box comes from `Range.getClientRects()` on the text node, so a text that runs out of its cell is measured where it is painted. The part an ancestor's overflow cuts off does not count. Text that is placed absolutely or fixed inside its cell (a badge, a tooltip, a menu), hidden for screen readers, or not shown is not judged. `--strict` fails on any of these findings. The rules are in `pages-lib.mjs`; `pages-fixture.test.mjs` checks the overlap rule in Chromium on a fixture page when Playwright is installed.
+
+   ```sh
+   cd scripts/gate && npm install && npx playwright install chromium
+   node pages.mjs --base http://192.0.2.20:3122 --out ../../gate/pages
+   ```
+
+   Playwright is a dev dependency of `scripts/gate` alone, pinned in its `package.json`. It lives there beside the other UI scripts, and the scheduler itself does not use node. In the Playwright container image of the same version, no install is needed. On Git Bash for Windows, set `MSYS_NO_PATHCONV=1`, or `/api/plan` is rewritten to a Windows path.
+
+The tests of the build come first, with `potluck-gate tests`. It runs `go test -json` in stages given by flags. It keeps every stage's whole output in `<out>/<stage>.log`, and it names each failing test (subtests too, with the log line where its output starts), each package that did not build, and each data race and panic with its test:
+
+```sh
+bin/potluck-gate tests --out gate/tests --stage "unit=-count=1 ./..." \
+    --stage "race=-race -count=1 ./..." --env CGO_ENABLED=1
+```
+
+Each program has `--help` and a `--dry-run` that starts nothing. `go test ./cmd/potluck-gate` checks them all in about 30 seconds:
+- the crash test and the plan comparison run against a fake build that loses writes or changes plans;
+- the same two run against the real scheduler with a fake fleet;
+- `tests` runs a small module with failing tests, a panic and a package that does not build;
+- the harness's rules run under `node --test`.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

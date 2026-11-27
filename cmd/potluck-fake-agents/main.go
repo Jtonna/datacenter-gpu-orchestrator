@@ -20,9 +20,16 @@
 //
 // --from-status reads a scheduler's GET /api/status (its agents) or GET
 // /api/nodes (its nodes, the local node left out) and mirrors ids, names,
-// devices, free memory, capabilities, watchdog floors and the headline
-// temperature of each node's stats. Addresses are never copied. --print
-// writes the node list it would use as JSON and exits.
+// platforms, devices, free memory, capabilities, watchdog floors and the
+// headline temperature of each node's stats. Addresses are never copied.
+// --print writes the node list it would use as JSON and exits.
+//
+// A node's "platform" (<os>-<arch>-<backend>, default linux-amd64-vulkan) is
+// what it registers as: linux-amd64-cuda sends the cuda backend and an
+// NVIDIA GPU, so the scheduler gives it the cuda platform and the tier that
+// matches it. Its default device is of that backend; devices of another
+// backend are refused at start. The scheduler's release must carry that
+// platform's programs, or the registration is refused.
 //
 // Each agent sends a stats object in the shape real agents send (stats
 // contract, stats_version 1) with headline_temp_c: the mirrored one, the
@@ -51,13 +58,17 @@ import (
 
 // Node is one fake agent, as nodes.json lists it.
 type Node struct {
-	ID               string              `json:"id"`
-	Name             string              `json:"name"`
-	Addr             string              `json:"addr,omitempty"` // default: --addr-base + index
-	MemTotalMiB      int64               `json:"mem_total_mib,omitempty"`
-	MemAvailableMiB  int64               `json:"mem_available_mib"`
-	Devices          []agentproto.Device `json:"devices,omitempty"` // default: one shared Vulkan0 device from the memory figures
-	GPUs             []agentproto.GPU    `json:"gpus,omitempty"`    // default: one integrated AMD GPU
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Addr            string `json:"addr,omitempty"` // default: --addr-base + index
+	MemTotalMiB     int64  `json:"mem_total_mib,omitempty"`
+	MemAvailableMiB int64  `json:"mem_available_mib"`
+	// Platform is <os>-<arch>-<backend> as the scheduler names it, for
+	// example linux-amd64-cuda; default linux-amd64-vulkan, mirrored by
+	// --from-status. The registration sends that os, arch and backend.
+	Platform         string              `json:"platform,omitempty"`
+	Devices          []agentproto.Device `json:"devices,omitempty"` // default: one device of the platform's backend from the memory figures (Vulkan0 shared, CUDA0 not)
+	GPUs             []agentproto.GPU    `json:"gpus,omitempty"`    // default: one integrated AMD GPU; with cuda one NVIDIA GPU
 	Capabilities     *[]string           `json:"capabilities,omitempty"`
 	WatchdogFloorMiB int64               `json:"watchdog_floor_mib,omitempty"` // default 1000
 
@@ -200,6 +211,9 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 			// reads them) and the agent's setters write only the agent's
 			GPUs: slices.Clone(n.GPUs), Devices: slices.Clone(n.Devices), WatchdogFloorMiB: n.WatchdogFloorMiB, HeartbeatEvery: o.Heartbeat,
 			Stats: statsOf(n)}
+		if goos, arch, backend, err := splitPlatform(n.Platform); err == nil {
+			a.OS, a.Arch, a.Backends = goos, arch, []string{backend}
+		}
 		if n.Capabilities != nil {
 			a.Capabilities = *n.Capabilities
 		}
@@ -312,10 +326,50 @@ func readNodes(file string) ([]Node, error) {
 	return doc.Nodes, nil
 }
 
+// defaultPlatform is what a fake registers as when nodes.json names none.
+const defaultPlatform = "linux-amd64-vulkan"
+
+// splitPlatform reads <os>-<arch>-<backend>; the backend is vulkan or cuda.
+func splitPlatform(p string) (goos, arch, backend string, err error) {
+	parts := strings.Split(p, "-")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" {
+		return "", "", "", fmt.Errorf("platform %q is not <os>-<arch>-<backend> (for example linux-amd64-cuda)", p)
+	}
+	switch parts[2] {
+	case agentproto.BackendVulkan, agentproto.BackendCUDA:
+	default:
+		return "", "", "", fmt.Errorf("platform %q: the backend must be vulkan or cuda", p)
+	}
+	return parts[0], parts[1], parts[2], nil
+}
+
+// checkPlatform refuses a platform that does not read, and devices of
+// another backend than the platform's (the scheduler would plan them as
+// that backend while the release runs the other).
+func checkPlatform(n Node) error {
+	_, _, backend, err := splitPlatform(n.Platform)
+	if err != nil {
+		return err
+	}
+	for _, d := range n.Devices {
+		if d.Backend != "" && d.Backend != backend {
+			return fmt.Errorf("device %s has backend %s but the platform is %s: give \"platform\" with the %s backend, or devices of %s", d.Name, d.Backend, n.Platform, d.Backend, backend)
+		}
+	}
+	return nil
+}
+
 // fillDefaults gives a node what a console agent reports when nodes.json
-// leaves it out: one shared Vulkan device holding the memory figures, an
-// integrated AMD GPU, the file_cache_evict capability and a 1000 MiB floor.
+// leaves it out: the platform linux-amd64-vulkan, one device of the
+// platform's backend holding the memory figures (a shared Vulkan device; a
+// CUDA device with memory of its own), a GPU to match (an integrated AMD
+// one; an NVIDIA one with cuda), the file_cache_evict capability and a
+// 1000 MiB floor.
 func fillDefaults(n *Node) {
+	if n.Platform == "" {
+		n.Platform = defaultPlatform
+	}
+	_, _, backend, _ := splitPlatform(n.Platform)
 	if n.MemTotalMiB == 0 {
 		for _, d := range n.Devices {
 			n.MemTotalMiB = max(n.MemTotalMiB, d.TotalMiB)
@@ -328,11 +382,19 @@ func fillDefaults(n *Node) {
 		n.MemAvailableMiB = n.MemTotalMiB - 1000
 	}
 	if len(n.Devices) == 0 {
-		n.Devices = []agentproto.Device{{Name: "Vulkan0", Backend: agentproto.BackendVulkan, TotalMiB: n.MemTotalMiB,
-			FreeMiB: n.MemAvailableMiB, SharesSystemMemory: true}}
+		if backend == agentproto.BackendCUDA {
+			n.Devices = []agentproto.Device{{Name: "CUDA0", Backend: agentproto.BackendCUDA, TotalMiB: n.MemTotalMiB, FreeMiB: n.MemAvailableMiB}}
+		} else {
+			n.Devices = []agentproto.Device{{Name: "Vulkan0", Backend: agentproto.BackendVulkan, TotalMiB: n.MemTotalMiB,
+				FreeMiB: n.MemAvailableMiB, SharesSystemMemory: true}}
+		}
 	}
 	if n.GPUs == nil {
-		n.GPUs = []agentproto.GPU{{Vendor: "amd", Integrated: true}}
+		if backend == agentproto.BackendCUDA {
+			n.GPUs = []agentproto.GPU{{Vendor: agentproto.VendorNvidia, Model: "fake NVIDIA GPU"}}
+		} else {
+			n.GPUs = []agentproto.GPU{{Vendor: "amd", Integrated: true}}
+		}
 	}
 	if n.Capabilities == nil {
 		c := []string{agentproto.CapFileCacheEvict}
@@ -377,6 +439,7 @@ func nodesFromStatus(src string) ([]Node, error) {
 			Name             string              `json:"name"`
 			State            string              `json:"state"`
 			Local            bool                `json:"local"`
+			Platform         string              `json:"platform"`
 			Devices          []agentproto.Device `json:"devices"`
 			MemAvailMiB      *int64              `json:"mem_available_mib"`
 			Capabilities     *[]string           `json:"capabilities"`
@@ -391,7 +454,7 @@ func nodesFromStatus(src string) ([]Node, error) {
 		if a.Local || a.ID == "" || a.State == "left" || a.State == "removed" {
 			continue
 		}
-		n := Node{ID: a.ID, Name: a.Name, Devices: a.Devices, Capabilities: a.Capabilities, HeadlineTempC: a.Stats.HeadlineTempC}
+		n := Node{ID: a.ID, Name: a.Name, Platform: a.Platform, Devices: a.Devices, Capabilities: a.Capabilities, HeadlineTempC: a.Stats.HeadlineTempC}
 		if a.MemAvailMiB != nil {
 			n.MemAvailableMiB = *a.MemAvailMiB
 		}
@@ -426,6 +489,9 @@ func assignAddrs(nodes []Node, base string) error {
 			return fmt.Errorf("node id %s is listed twice", nodes[i].ID)
 		}
 		seen[nodes[i].ID] = true
+		if err := checkPlatform(nodes[i]); err != nil {
+			return fmt.Errorf("node %s: %w", nodes[i].Name, err)
+		}
 		if nodes[i].Addr != "" {
 			continue
 		}

@@ -2,13 +2,24 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
-## build-91 — Scheduler image: equal consoles with stored figures first
+## build-91 — Scheduler image: equal consoles with stored figures first; the gate programs and fake agents with a platform each
 
-No agent change, no new port, no schema change, no new setting.
+No agent change, no new port, no schema change, no new setting. Two parts.
+
+### Placement: equal consoles with stored figures first
 
 - **The order among equal consoles** (stable placement, `placement_tolerance_mib` above 0) is now: warm first; then, for a `host: node` profile, the console with a measured host overhead of the shape (it hosts, so the host row is measured instead of `host_overhead_mib`); then consoles a stored measurement of the shape has per-node figures for; then by name. A multi-console load takes the set with more of them in that order.
 - **Why.** The measured need follows the shape and device count on any consoles, but per-node peaks and learned shares apply only to the set they were measured on. Taking that set again makes them apply.
 - **What it never changes.** Fit is still decided on the exact figures, and every action (start, queue, reject) is what it was. Forced profiles, chosen zones and tolerance 0 are untouched.
+
+### Test tools: the release gate programs, and fake agents keep each zone's platform
+
+The scheduler and agent code do not change in this part.
+
+- **Gate programs.** `potluck-gate` (`cmd/potluck-gate`: `crash`, `plans`, `tests`) and `scripts/gate/pages.mjs` (every page drawn, with the overlap measure) now live in the repository, so a gate runs again from a clean clone at a commit. README.md, "How a release is judged", gives the commands.
+- **A platform per fake.** A node in `--nodes` may give `platform` (`<os>-<arch>-<backend>`, default `linux-amd64-vulkan`). `linux-amd64-cuda` registers with the cuda backend and an NVIDIA GPU, so the scheduler gives it the cuda platform and the tier that matches it. Its default device is a `CUDA0` with memory of its own.
+- **Mirrored.** `--from-status` copies each zone's `platform` from `GET /api/status` or `GET /api/nodes`, so a copy of a fleet with a cuda laptop shows it in its own tier.
+- **Checked.** A platform that does not read, or devices of another backend than the platform's, stop the tool at start with the node named.
 
 ## build-90 — Scheduler image: a profile's own --ctx-checkpoints and --cache-ram, counted for that profile (opt-in)
 

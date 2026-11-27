@@ -11,6 +11,7 @@ package fakeagent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,10 +38,12 @@ type Agent struct {
 	Release    string
 	Install    string
 	StartID    string
-	Backends   []string
-	GPUs       []agentproto.GPU
-	Devices    []agentproto.Device
-	MemAvail   int64
+	// OS and Arch are the registration's; empty sends linux and amd64.
+	OS, Arch string
+	Backends []string
+	GPUs     []agentproto.GPU
+	Devices  []agentproto.Device
+	MemAvail int64
 	// MemTotalMiB is the registration's mem_total_mib; 0 sends 16000.
 	MemTotalMiB int64
 	Foreign     []agentproto.ForeignProcess
@@ -306,7 +309,7 @@ func (a *Agent) register(ctx context.Context) bool {
 	// the slices are copied under a.mu: the request is marshalled after the
 	// lock is released (post), and a setter may change the agent meanwhile
 	req := agentproto.RegisterRequest{ID: a.ID, Name: a.Name, AgentRelease: a.Release, AgentStartID: a.StartID,
-		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: slices.Clone(a.GPUs), Backends: slices.Clone(a.Backends),
+		OS: cmp.Or(a.OS, "linux"), Arch: cmp.Or(a.Arch, "amd64"), Install: a.Install, Addr: a.Addr, GPUs: slices.Clone(a.GPUs), Backends: slices.Clone(a.Backends),
 		MemTotalMiB: a.memTotal(), ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
 		LaunchID: lid, ForeignProcesses: slices.Clone(a.Foreign), WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: slices.Clone(a.Capabilities)}
 	a.mu.Unlock()
