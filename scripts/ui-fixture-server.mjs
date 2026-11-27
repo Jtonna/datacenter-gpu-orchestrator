@@ -553,6 +553,16 @@ const server = http.createServer((req, res) => {
     stored_config: storedConfig(CONFIG),
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
+  // GET /api/config/profiles/{id}: one profile's stored spec (the profile panel's
+  // extra arguments, "Compare with…"); glm-4.5-air carries a long argument list
+  // here only, for the narrow-width layout checks (TestUILayoutNoOverlap)
+  if (req.method === 'GET' && /^\/api\/config\/profiles\/[^/]+$/.test(p)) {
+    const id = decodeURIComponent(p.slice('/api/config/profiles/'.length));
+    const sp = profileSpecs()[id];
+    if (!sp) return json(res, 404, { error: { message: `no profile ${id}`, type: 'not_found' } });
+    const long = ['--ctx-checkpoints', '3', '--cache-ram', '0', '--jinja', '--chat-template-kwargs', '{"enable_thinking":false}', '--override-tensor', 'blk\\.(1[0-9]|2[0-9])\\.ffn_.*_exps\\.=CPU'];
+    return json(res, 200, { revision: cfgDoc().revision, id, profile: Object.assign({ kind: 'llama' }, sp, id === 'glm-4.5-air' ? { extra_args: long } : {}) });
+  }
   if (p === '/api/config/schema') return json(res, 200, cfgSchema);
   if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: PENDING ? Object.assign({}, d.settings, { default_model_source: PZ_SOURCE }) : d.settings, settings_set: d.settings_set }); }
   if (p === '/api/config/recovery') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, recovery: d.recovery }); }

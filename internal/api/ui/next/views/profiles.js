@@ -38,12 +38,12 @@ import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, 
 import { openPanel, openPanelNow } from '../core/panel.js';
 import { pager } from '../core/pager.js';
 import { num, mib, gb, ctx, plural, dur } from '../core/format.js';
-import { plainReason, plainBasis, machines, nodeName, zoneChips } from '../core/status.js';
+import { plainReason, plainBasis, machines, nodeName, zoneChips, zoneLabel } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
 import { restorePoints } from './models/kinds.js';
-import { profileDiff } from '../core/profilediff.js';
+import { profileDiff, describe } from '../core/profilediff.js';
 
 const PER = 16; // rows a page (as the Zones list)
 
@@ -391,14 +391,9 @@ export function openProfilePanel(o) {
 
 // ---------- Compare with… (build-92 W2) ----------
 
-// show a setting's value in the compare table
-function cmpValue(v) {
-  if (v === undefined) return h('span.mut', 'not set');
-  if (v === true) return h('span', 'set');
-  if (Array.isArray(v)) return v.length ? h('span.mono', v.join(', ')) : h('span.mut', 'empty');
-  if (v && typeof v === 'object') return h('span.mono', JSON.stringify(v));
-  return h('span.mono', String(v));
-}
+// one value of the compare table (core/profilediff.js describe): an id, a
+// file, a flag or a figure in mono, words in sans; "not set" quiet
+const cmpValue = (text, mono) => (text === 'not set' ? h('span.mut', text) : mono ? h('span.mono', text) : h('span', text));
 // the need a dry plan gives (POST /api/plan): the figure and how it was worked out
 function cmpNeed(r) {
   if (!r || r.status !== 'fulfilled') return h('span.mut', { title: r && r.reason ? r.reason.message : '' }, 'no plan');
@@ -406,7 +401,8 @@ function cmpNeed(r) {
   if (!v.need_mib) return h('span.mut', v.reason ? plainReason(v.reason) : 'not known');
   return h('span', { title: mib(v.need_mib) + (v.need_basis ? ' · ' + v.need_basis : '') }, h('span.mono', gb(v.need_mib)), v.need_basis ? h('span.mut', ' · ' + plainBasis(v.need_basis)) : null);
 }
-const cmpLabel = key => (key.startsWith('extra_args ') ? h('span', 'Extra argument ', h('span.mono', key.slice(11))) : LABELS[key] || key);
+// a row's label: the setting in the page's words; an extra argument names its flag; a key the table does not know stays raw, in mono
+const cmpLabel = d => (d.flag ? h('span', 'Extra argument ', h('span.mono', d.flag)) : d.keyRaw ? h('span.mono', { 'data-raw-key': '' }, d.label) : d.label);
 
 // compareDialog(e, all): pick ANY profile (search; production and test) and
 // see "Setting | this profile | the other": the differences only, or every
@@ -428,13 +424,17 @@ export function compareDialog(e, all) {
       .map((x, i) => [rank(x), i, x]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(r => r[2]);
     list.replaceChildren(...hits.slice(0, 8).map(x => h('button', { type: 'button', class: 'cmp-pick' + (other && other.id === x.id ? ' on' : ''), 'data-pick': x.id, onclick: () => pick(x) },
       h('span', profileLabel(x)), h('span.mut', ' · ' + (profileStage(x) === 'test' ? 'test' : 'production'))),
-    ), hits.length > 8 ? h('span.mut', '+ ' + num(hits.length - 8) + ' more: type to narrow') : null, !hits.length ? h('span.mut', 'No profile matches') : null);
+    ), ...[hits.length > 8 ? h('span.mut', '+ ' + num(hits.length - 8) + ' more: type to narrow') : null, !hits.length ? h('span.mut', 'No profile matches') : null].filter(Boolean));
   }
   function drawResult() {
     if (!other) { result.replaceChildren(h('p.mut', 'Pick a profile to compare with.')); return; }
     if (err) { result.replaceChildren(banner('err', ['The profiles could not be read: ', err])); return; }
     if (!got) { result.replaceChildren(skeleton(4)); return; }
     const rows = profileDiff(got.sa, got.sb, Object.keys(LABELS));
+    // a forced zone by its name: the dry plans' own names, then the zones list, the id only when there is none
+    const plans = [got.pa, got.pb].map(x => (x && x.status === 'fulfilled' ? x.value : null));
+    const zone = id => { for (const pl of plans) { const n = zoneLabel(state.status || {}, id, pl); if (n !== id) return n; } return id; };
+    const who = [profileLabel(e), profileLabel(other)];
     const diff = rows.filter(r => !r.same);
     const shown = showAll ? rows : diff;
     result.replaceChildren(
@@ -443,9 +443,9 @@ export function compareDialog(e, all) {
       h('table.tbl.cmp-tbl', { 'data-compare': other.id },
         h('thead', h('tr', h('th', { scope: 'col' }, 'Setting'), h('th', { scope: 'col' }, profileLabel(e)), h('th', { scope: 'col' }, profileLabel(other)))),
         h('tbody',
-          h('tr', { 'data-need': '' }, h('td', 'What it needs (the plan now)'), h('td', cmpNeed(got.pa)), h('td', cmpNeed(got.pb))),
-          shown.map(r => h('tr', { 'data-key': r.key, 'data-flag': r.key.startsWith('extra_args ') ? r.key.slice(11) : null, 'data-diff': r.same ? 'same' : 'diff', 'data-only': r.only || null },
-            h('td', cmpLabel(r.key)), h('td', cmpValue(r.a)), h('td', cmpValue(r.b)))))));
+          h('tr', { 'data-need': '' }, h('td', 'What it needs (the plan now)'), h('td', { 'data-who': who[0] }, cmpNeed(got.pa)), h('td', { 'data-who': who[1] }, cmpNeed(got.pb))),
+          shown.map(r => { const d = describe(r, got.sa, got.sb, { zone }); return h('tr', { 'data-key': r.key, 'data-flag': r.key.startsWith('extra_args ') ? r.key.slice(11) : null, 'data-diff': r.same ? 'same' : 'diff', 'data-only': r.only || null },
+            h('td', cmpLabel(d)), h('td', { 'data-who': who[0] }, cmpValue(d.a, d.monoA)), h('td', { 'data-who': who[1] }, cmpValue(d.b, d.monoB))); }))));
   }
   async function pick(x) {
     other = x; got = null; err = ''; const my = ++seq;

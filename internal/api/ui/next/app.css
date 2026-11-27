@@ -57,7 +57,9 @@ th{font-weight:var(--w-label)}
 td{font-weight:var(--w-body)}
 a:hover{color:var(--link-hover);text-decoration:underline}
 h1,h2,h3,p{margin:0}
-button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+/* a button's label is always the sans face, also in a figure cell that sets the mono family (the reviewer, build-92) */
+button{font-family:var(--sans);font-size:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 [hidden]{display:none!important}
 time[title],[title].hint{cursor:help}
@@ -202,7 +204,7 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:var(--w-num
 }
 
 /* ---------- buttons and controls (Components: controls) ---------- */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 13px;border-radius:var(--r-btn);border:1px solid var(--ctl-border);background:var(--surface);color:var(--ink);font-size:var(--fs-body);font-weight:var(--w-btn);cursor:pointer;white-space:nowrap;text-decoration:none}
+.btn{font-family:var(--sans);display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 13px;border-radius:var(--r-btn);border:1px solid var(--ctl-border);background:var(--surface);color:var(--ink);font-size:var(--fs-body);font-weight:var(--w-btn);cursor:pointer;white-space:nowrap;text-decoration:none}
 .btn:hover{background:var(--hover-bg);color:var(--ink);text-decoration:none}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.pri:hover{background:#0c5a3e}
@@ -502,7 +504,7 @@ code.cmd{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow-wra
 .side-body{flex:1 1 auto;min-height:0;overflow-y:auto;border-top:1px solid #e9eeeb;padding:16px 16px 20px 20px;display:flex;flex-direction:column;gap:var(--gap-panel)}
 /* a panel or dialog that scrolls inside keeps the wheel at its end: the page behind does not move */
 .side-body,.drawer,.dlg,.hp{overscroll-behavior:contain}
-.side .sf{margin-top:auto;flex:none;display:flex;align-items:center;gap:8px;padding:14px 16px 16px 20px;border-top:1px solid #e9eeeb}
+.side .sf{margin-top:auto;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 16px 16px 20px;border-top:1px solid #e9eeeb}
 @media(max-width:700px){.side-head{padding:12px 12px 10px 14px}.side-body{padding:12px 14px 24px}}
 
 /* ---------- charts ---------- */
@@ -586,6 +588,10 @@ a.cfg:hover{color:var(--link)}
 .facts dt{color:var(--mut);font-weight:var(--w-label);margin:0}
 .facts dd{margin:0;min-width:0;font-family:var(--mono);color:var(--text-2);display:flex;align-items:center;gap:8px;white-space:nowrap;font-weight:var(--w-num)}
 .facts dd>span{overflow:hidden;text-overflow:ellipsis}
+/* the profile panel's facts are never cut: prose wraps at spaces, a mono value (the extra arguments) between its flags, one long token breaks only as the last resort (build-92) */
+.prf-facts dd{white-space:normal;align-items:baseline}
+.prf-facts dd>span{overflow:visible;text-overflow:clip;min-width:0;overflow-wrap:break-word}
+.prf-facts dt{align-self:start}
 .prf-facts dd{font-family:var(--sans);font-weight:var(--w-body)}
 /* one node's memory: a single track, one marker line for the usable limit */
 .membar{position:relative;padding:4px 0}
@@ -1044,6 +1050,9 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .side-body:has(>.gp-acts){padding:0;gap:0;border-top:0}
 .side-body>*{flex-shrink:0} /* a long panel scrolls; its rows keep their height */
 .sf .gp-act{padding:0;margin:0}
+/* the foot's spacer: what follows it is pushed right (margin), so on a narrow panel the row wraps and the last actions stay reachable, right-aligned on their own line (build-92) */
+.side .sf>.grow:empty{display:none}
+.side .sf>.grow:empty+*{margin-left:auto}
 .cmd{flex:1;min-width:0;display:flex;align-items:center;height:32px;box-sizing:border-box;padding:0 11px;border:1px solid #c5cec9;border-radius:8px;background:#f8faf8;overflow:hidden}
 .side-body:has(>.gp-acts) .gp-acts .btn{height:32px}
 .zl{display:flex;align-items:center;gap:14px;padding:12px 16px 14px 20px;border-top:1px solid #e9eeeb}
@@ -1532,7 +1541,7 @@ a.tbar{text-decoration:none;cursor:pointer}
 .factgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px;margin:0;font-size:12.5px}
 .factgrid>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid var(--hairline);padding:4px 0;min-width:0}
 .factgrid dt{color:var(--mut);font-weight:var(--w-body);margin:0;flex:none}
-.factgrid dd{margin:0;min-width:0;text-align:right;font-weight:var(--w-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.factgrid dd{margin:0;min-width:0;text-align:right;font-weight:var(--w-body);overflow-wrap:break-word}
 .factgrid dd .mono{color:var(--text)}
 @media(max-width:700px){.factgrid{grid-template-columns:1fr}}
 /* the Configurations table grows with the panel: no scroll bar of its own (build-92 W1) */
@@ -1916,6 +1925,17 @@ a.bp-view:hover{background:var(--hover-bg)}
 .cmp-picks{display:flex;flex-wrap:wrap;gap:6px}
 .cmp-pick{border:1px solid var(--ctl-border);background:var(--surface);color:var(--ink);border-radius:7px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer}
 .cmp-pick.on{border-color:var(--accent);background:var(--hover-bg)}
-.cmp-tbl td{vertical-align:top;overflow-wrap:anywhere}
+.cmp-tbl td{vertical-align:top;overflow-wrap:break-word}
+/* a flag in a label is one word: never broken at its hyphens */
+.cmp-tbl td:first-child .mono{white-space:nowrap}
+/* narrow: each setting stacked, its label on its own line, the two values under it, each named by its profile; no word is broken, nothing scrolls sideways (build-92) */
+@media(max-width:640px){
+  .cmp-tbl,.cmp-tbl tbody{display:block}
+  .cmp-tbl thead{display:none}
+  .cmp-tbl tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2px 12px;padding:8px 0;border-top:1px solid var(--line)}
+  .cmp-tbl td,.cmp-tbl td:first-child,.cmp-tbl td:last-child{display:block;height:auto;padding:0;border:0;min-width:0}
+  .cmp-tbl td:first-child{grid-column:1/-1;font-weight:var(--w-label);color:var(--ink)}
+  .cmp-tbl td[data-who]::before{content:attr(data-who);display:block;font-family:var(--sans);font-size:11px;font-weight:var(--w-label);color:var(--mut)}
+}
 .cmp-tbl tr[data-diff=diff] td:first-child{color:var(--ink)}
 .cmp-tbl tr[data-need] td{background:var(--hover-bg)}
