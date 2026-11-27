@@ -57,6 +57,7 @@
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
 //               "notOnPage": ["text nowhere on the page", ...],
 //               "notOnPageRe": ["regexp no text of the page may match", ...],
+//               "brandFree": true: no brand word (PlayStation, PS5, OMEN, ...) and no "console(s)" in the page's text or its titles, tips, placeholders, labels,
 //               "titles": ["text some title attribute on the page contains", ...],
 //               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
 //               "notFetched": ["regexp no request of the case may match", ...],
@@ -756,7 +757,18 @@ for (const c of spec.cases) {
   for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
   for (const bad of c.notOnPage || []) if (pageText.includes(bad)) errors.push('on the page, but must not be: ' + JSON.stringify(bad));
   for (const re of c.notOnPageRe || []) { const m = pageText.match(new RegExp(re)); if (m) errors.push('on the page, matches ' + re + ': ' + JSON.stringify(m[0])); }
-  // links: [{text, path}]: somewhere on the page (shell included) a link with
+  // brandFree: no hardware brand and no "console" as a machine word in the
+  // page's text or in a title, data-tip, placeholder or aria-label (Potluck
+  // is generic). Fixture names such as console-1 or ps5-01 are data, not
+  // words of the product, so a word followed by "-" is let through.
+  if (c.brandFree) {
+    const brand = /playstation|\bps[45]s?\b(?!-)|\borbis\b|\boberon\b|\bomen\b|alienware(?!-)|\bconsoles?\b(?!-)/i;
+    const texts = [pageText];
+    const walk = n => { if (n.getAttribute) for (const a of ['title', 'data-tip', 'placeholder', 'aria-label']) { const v = n.getAttribute(a); if (v) texts.push(v); } for (const k of n.childNodes || []) walk(k); };
+    walk(document.body);
+    for (const t of texts) { const m = t.match(brand); if (m) { errors.push('a brand or machine-type word on the page: ' + JSON.stringify(m[0]) + ' in ' + JSON.stringify(t.slice(Math.max(0, m.index - 60), m.index + 60))); break; } }
+  }
+  // links:[{text, path}]: somewhere on the page (shell included) a link with
   // that text whose href, resolved against the page's address, has that path.
   for (const l of c.links || []) {
     const found = document.body.querySelectorAll('a').filter(a => a.textContent.trim() === l.text);

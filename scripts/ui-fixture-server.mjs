@@ -85,7 +85,7 @@
 // instance was loaded on chosen zones (pinned_nodes).
 //
 // --no-host-uptime: no agent reports host_uptime_s (an older agent, a console
-// fed by the fleet console); otherwise every reachable agent does.
+// fed by the legacy fleet feed); otherwise every reachable agent does.
 //
 // --inst-detail (with --models): the loaded instance also reports its memory
 // per zone (load log), its last finished request and its device total.

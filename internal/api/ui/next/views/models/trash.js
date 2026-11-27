@@ -157,7 +157,7 @@ const HEADS = {
 };
 const AGAIN = new Set(['interrupt_incomplete', 'loaded_again', 'in_use', 'move_failed', 'config_refused']);
 
-// interrupts(would, m) -> "gemma-4-27b is loaded on ps5-01 and ps5-02 with 2
+// interrupts(would, m) -> "gemma-4-27b is loaded on node-01 and node-02 with 2
 // requests in flight; 1 request for gemma-4-27b:long is queued", and the
 // number of requests that fail. The zones are the answer's own (nodes, v67);
 // a server older than that names none, and the catalog's instance is joined

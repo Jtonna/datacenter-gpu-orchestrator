@@ -81,7 +81,7 @@ export function runsOnCell(m, st) {
     f.ranOn ? h('span.sub', `measured on ${f.ranOn}`) : no ? h('span.sub', no) : null);
 }
 
-// runsLine(m, st) -> "Runs on 1 PS5 · 7.2 GB" for a header.
+// runsLine(m, st) -> "Runs on 1 zone · 7.2 GB" for a header.
 export function runsLine(m, st) {
   const f = fitOf(m, st);
   return f.need ? `${f.text} · ${gb(f.need)}` : f.text;
@@ -235,7 +235,7 @@ export function planCell(p, st) {
   const raw = plan.reason ? 'The scheduler says: ' + plan.reason : null;
   // Names only where they are given (the page rule): a forced profile's own
   // nodes. An automatic profile's plan picks among equal nodes and can pick
-  // others a moment later, so it says how many: "would load on 2 PS5s".
+  // others a moment later, so it says how many: "would load on 2 zones".
   // A loaded instance names its nodes (instance cards); a chosen zone, in
   // the Placement preview with its live memory rows.
   const forced = (p.force_nodes || []).length > 0 || p.placement === 'forced';

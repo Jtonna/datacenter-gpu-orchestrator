@@ -107,7 +107,7 @@ func buildSettingFields() []Field {
 		d("worker_probe_interval", "workers", "How often a TCP connect probe checks workers; 0 turns it off (leave it off for rpc-server workers).", func(c *Config) *time.Duration { return &c.Defaults.WorkerProbeInterval }, num(0)),
 		b("worker_probe_during_inference", "workers", "Let the connect probe run while the instance has a request in flight.", func(c *Config) *bool { return &c.Defaults.WorkerProbeDuringInference }),
 		{Key: "membership", Scope: S, Section: "agents", Type: "enum", Enum: []string{MembershipFleet, MembershipAgents},
-			Description: "Where the pool's nodes come from: fleet (the fleet console feed) or agents (registrations of potluck-agent). Read once at start.",
+			Description: "Where the pool's nodes come from: agents (registrations of potluck-agent) or fleet (the legacy fleet feed). Read once at start.",
 			ptr:         func(c *Config) any { return &c.Defaults.Membership }},
 		b("worker_model_dir", "agents", "Ask agent workers to read model files themselves (model_dir in the worker launch); off sends the weights over the worker connection.", func(c *Config) *bool { return &c.Defaults.WorkerModelDir }),
 		s("default_model_source", "agents", "The model source a machine made with Create new zone is given when the dialog names none: share:<host>:/<path> (an NFS export the machine mounts), dir:/<path> (a folder on the machine) or push (the weights are sent over the worker connection). Empty (the default): there is none, and creating a zone without a model source is refused. Write it as the new machines reach it.", func(c *Config) *string { return &c.DefaultModelSource }),
@@ -150,7 +150,7 @@ func buildSettingFields() []Field {
 		{Key: "request_ttl", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Max: num(60), Description: "How long a recovery request stays valid at the node." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.RequestTTL }},
 		{Key: "http_timeout", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Description: "Timeout of the request that hands a recovery request to the fleet manager." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.HTTPTimeout }},
 
-		{Key: "url", Scope: F, Section: "fleet", Type: "string", Description: "Base URL of the fleet console; empty means only the local node is used. Read once when the fleet client starts." + notWithAgents, ptr: func(c *Config) any { return &c.Fleet.URL }},
+		{Key: "url", Scope: F, Section: "fleet", Type: "string", Description: "Base URL of the legacy fleet feed; empty means only the local node is used. Read once when the fleet client starts." + notWithAgents, ptr: func(c *Config) any { return &c.Fleet.URL }},
 		{Key: "local_node", Scope: F, Section: "fleet", Type: "string", Description: "The fleet name of the host the scheduler runs on. Read once when the fleet client starts. With membership agents it is used only while the local_node setting is empty.", ptr: func(c *Config) any { return &c.Fleet.LocalNode }},
 		{Key: "stale_after", Scope: F, Section: "fleet", Type: "duration", Unit: "seconds", Min: num(1), Description: "Age of the fleet view beyond which remote nodes are not used." + notWithAgents, ptr: func(c *Config) any { return &c.Fleet.StaleAfter }},
 	}

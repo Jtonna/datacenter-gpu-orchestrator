@@ -19,7 +19,7 @@
 // The server's sentence is shown on a 400 or 409.
 //
 // The full key: only in the Created / Rotated panel, held in that panel's
-// closure (never in the address, the view's state, a toast or the console),
+// closure (never in the address, the view's state, a toast or the developer tools),
 // and dropped when the panel closes or turns into Manage.
 //
 // Reads: REST GET /api/agents; WebSocket "config" (another tab changed a

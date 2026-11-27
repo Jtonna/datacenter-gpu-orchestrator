@@ -169,7 +169,7 @@ export function createZone(o = {}) {
         h('div.zc-grid',
           h('label.field', h('span.lab', 'Model source'), source, srcNote),
           h('label.field', h('span.lab', 'The command works for'), ttl, h('span.help', 'At most an hour. A restart of Potluck also ends it.'))),
-        h('p.zc-safe', { 'data-cz': 'safe' }, 'The script installs the Potluck agent and nothing else. It refuses to run on a PlayStation console and on the scheduler\'s own machine, prints what it will do first, and restarts no machine.'),
+        h('p.zc-safe', { 'data-cz': 'safe' }, 'The script installs the Potluck agent and nothing else. It refuses to run on the scheduler\'s own machine and on a machine whose system runs from memory (use the RAM-only starter there), prints what it will do first, and restarts no machine.'),
         h('label.field', h('span.lab', 'Comment (required)'), comment),
         st.err ? h('div.err', { role: 'alert', 'data-cz': 'error' }, st.err,
           st.errSource ? [' ', h('a', { href: href('settings', ['agents']), 'data-cz': 'settings-link', onclick: () => done(false) }, 'Set the default model source')] : null) : null,

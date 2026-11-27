@@ -11,7 +11,7 @@ import (
 )
 
 // StartupNotIncluded is the sentence shown with every start-up figure.
-const StartupNotIncluded = "On a console the time before the Linux kernel starts cannot be seen from inside Linux and is not included; none of these is a time from power-on."
+const StartupNotIncluded = "The time before the Linux kernel starts (firmware and boot loader) cannot be seen from inside Linux and is not included; none of these is a time from power-on."
 
 func (s *Server) startupRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/nodes/{id}/expect-restart", s.nodeExpectRestart)

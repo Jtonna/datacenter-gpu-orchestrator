@@ -364,7 +364,7 @@
     "agents"
    ],
    "default": "fleet",
-   "description": "Where the pool's nodes come from: fleet (the fleet console feed) or agents (registrations of potluck-agent). Read once at start.",
+   "description": "Where the pool's nodes come from: agents (registrations of potluck-agent) or fleet (the legacy fleet feed). Read once at start.",
    "restart_required": true
   },
   {
@@ -743,7 +743,7 @@
    "section": "fleet",
    "type": "string",
    "default": "",
-   "description": "Base URL of the fleet console; empty means only the local node is used. Read once when the fleet client starts. Not used with membership agents.",
+   "description": "Base URL of the legacy fleet feed; empty means only the local node is used. Read once when the fleet client starts. Not used with membership agents.",
    "restart_required": true
   },
   {

@@ -164,7 +164,7 @@ func DefaultRecovery() Recovery {
 		StepWait: 90 * time.Second, RequestTTL: 45 * time.Second, HTTPTimeout: 3 * time.Second}
 }
 
-// Fleet is the fleet console connection.
+// Fleet is the connection to the legacy fleet feed (membership fleet).
 //
 // LEGACY: used by the fleet membership mode only, kept until phase 7. The
 // fleet.* keys stay in the configuration document until then.

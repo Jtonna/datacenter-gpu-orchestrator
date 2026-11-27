@@ -255,7 +255,7 @@ function planView(plan, err, sig) {
 
 // The node actions on a selection: a pause on each zone, or the opposite.
 // Reboot and Open SSH: drawn as designed, not built
-const REBOOT_WHY = 'Not available: Potluck cannot restart a machine yet (there is no server route for it), and a PS5 is never rebooted from here: a Linux reboot drops a console to the PlayStation system.';
+const REBOOT_WHY = 'Not available: Potluck cannot restart a machine yet.';
 const SSH_WHY = 'Not available yet: SSH from these pages is left out for now, so that nothing here depends on one particular setup (a user name, a key or a jump host).';
 
 const BULK = {
@@ -1010,7 +1010,7 @@ registerView({
           // Uptime: the machine's own uptime (since its kernel booted), the agent's
           // host_uptime_s from its last heartbeat plus the time since that
           // heartbeat (last_seen_ago_s). Left out, not a dash, when the agent
-          // reports none (an older agent, a console fed by the fleet console)
+          // reports none (an older agent, a zone from the legacy fleet feed)
           // or the zone is not reachable (the figure would be stale).
           hostUptime(a, n) != null ? fact('Machine up', h('b', { 'data-zp': 'uptime', title: 'How long the machine has been up since it last started, as its agent reports it' }, goneFor(hostUptime(a, n) * 1000))) : null,
           fact('Link speed', link

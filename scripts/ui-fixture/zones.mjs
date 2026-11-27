@@ -202,7 +202,7 @@ export function zonesStatus(base, now, mode, o = {}) {
   // the machine's own uptime (host_uptime_s, from the agent's heartbeat) on
   // every reachable agent, 12 d 4 h on the first and less on the others;
   // o.hostUptime === false: no agent reports it (older agents, consoles fed by
-  // the fleet console), and the zone panel leaves the Uptime tile out
+  // the legacy fleet feed), and the zone panel leaves the Uptime tile out
   st.agents.forEach((a, i) => {
     if (o.hostUptime === false || a.state !== 'active') delete a.host_uptime_s;
     else a.host_uptime_s = 12 * 86400 + 4 * 3600 - (i % 9) * 86400 - (i % 5) * 3600;

@@ -54,14 +54,14 @@ export const GROUPS = [
   ['logs', 'Central logging', 'Whether log lines are collected, how long the log store keeps them and who may send them.'],
   ['bench', 'Benchmarks', 'The benchmark feature and when it flags a regression.'],
   ['recovery', 'Recovery', 'What the scheduler asks the fleet manager to do for a worker that stopped answering.'],
-  ['fleet', 'Fleet', 'The connection to the fleet console that lists the zones.'],
+  ['fleet', 'Fleet', 'The legacy fleet feed that lists the zones (membership: fleet).'],
 ];
 const UNKNOWN = 'unknown';
 
 // The groups that membership agents does not read: marked, with the reason.
 const UNUSED_WITH_AGENTS = {
   recovery: 'Not used in this mode: with agents, the scheduler never sends recovery requests.',
-  fleet: 'Not used in this mode: the zones come from agent registrations, not from a fleet console. Only local_node is still read here, while the local_node setting under Runtime is empty.',
+  fleet: 'Not used in this mode: the zones come from agent registrations, not from the legacy fleet feed. Only local_node is still read here, while the local_node setting under Runtime is empty.',
 };
 
 // What loosening a safety setting risks, one plain line each (shown with the full help).
@@ -69,7 +69,7 @@ const RISK = {
   forced_fit_check: 'Set to off or warn, a profile with forced zones can start even though its model does not fit, and the machine can run out of memory. Machines that join through agents are always checked.',
   split_skew_margin: 'A larger margin lets one zone of a split model take more than its share, which can push that zone over its memory.',
   estimate_margin: 'A smaller margin trusts the memory estimate more. If the estimate is low, a load can run a zone out of memory.',
-  load_memory_floor_mib: 'Set lower, or to 0, a load that is eating a shared-memory machine (a console) is no longer stopped in time, and the console can crash.',
+  load_memory_floor_mib: 'Set lower, or to 0, a load that is eating a shared-memory machine is no longer stopped in time, and the machine can crash.',
 };
 
 const SCOPE_PATH = { settings: '/api/config/settings', recovery: '/api/config/recovery', fleet: '/api/config/fleet' };

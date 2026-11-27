@@ -2,7 +2,7 @@
 // GET /api/startups pulled on demand (no DOM).
 //
 // The figure: seconds from boot start to ready for model loads. Boot start
-// is the console side's boot_origin when it gives one (0 on a full start,
+// is the machine's own boot_origin when it gives one (0 on a full start,
 // the moment the restart began on a soft restart); otherwise the start of
 // the Linux kernel for a full start and the start of userspace for a soft
 // restart. The record's origin says which. An agent restart (the machine
@@ -12,7 +12,7 @@ import { unplacedReason } from './nodeactions.js';
 
 // The sentence shown wherever a figure is shown (the server sends the same
 // one as not_included).
-export const NOT_INCLUDED = 'On a console the time before the Linux kernel starts cannot be seen from inside Linux and is not included; none of these is a time from power-on.';
+export const NOT_INCLUDED = 'The time before the Linux kernel starts (firmware and boot loader) cannot be seen from inside Linux and is not included; none of these is a time from power-on.';
 
 export const KIND = {
   full: 'full start',
@@ -53,7 +53,7 @@ const MARK = {
   exporter_up: 'Exporters running',
   first_stats: 'First stats read',
   boot_origin: 'Start began',
-  boot_origin_partial: 'Userspace started (console side)',
+  boot_origin_partial: 'Userspace started (reported by the machine)',
   boot_progress_start: 'Boot progress started',
   network_ok: 'Network up',
   payload_ok: 'Payload loaded',

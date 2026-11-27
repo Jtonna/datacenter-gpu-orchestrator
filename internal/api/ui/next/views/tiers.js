@@ -144,7 +144,7 @@ function overrideDialog(nodes, initial) {
   return dialog({
     title: initial ? 'Edit the override' : 'Add a node override',
     body: close => h('div.col', { style: 'gap:14px' },
-      h('p.mut', 'Use this address for the rpc-server of the zone instead of the one the fleet console reports.'),
+      h('p.mut', 'Use this address for the rpc-server of the zone instead of the one the legacy fleet feed reports.'),
       h('datalist', { id: 'trs-known' }, nodes.map(n => h('option', { value: zname(n) }))),
       h('div.field', h('label', 'Zone'), name, h('span.help', 'The zone id or its host name.')),
       h('div.field', h('label', 'RPC address'), rpc, h('span.help', 'host:port of the worker, for example 192.0.2.3:50052.'), err),
@@ -478,13 +478,13 @@ registerView({
 
     function addTo(which) {
       const L = LISTS[which], v = (addText[which] || '').trim();
-      if (!v) { addErr[which] = 'Write a zone id, a host name or a pattern such as ps5-test*.'; view.refresh(); return; }
+      if (!v) { addErr[which] = 'Write a zone id, a host name or a pattern such as test-*.'; view.refresh(); return; }
       if (work()[which].includes(v)) { addErr[which] = v + ' ' + L.already; view.refresh(); return; }
       addErr[which] = ''; addText[which] = '';
       edit(w => { w[which].push(v); });
     }
     // A stored entry that is the id of a known zone shows the zone's name
-    // beside it ("ps5-03 · 02:00:00:…"); a name, a pattern or an id no zone
+    // beside it ("node-03 · 02:00:00:…"); a name, a pattern or an id no zone
     // has stays as stored. Names from GET /api/nodes (else the status agents).
     // Only the text changes: the list, Remove and the save use the stored value.
     function zoneNames() {
@@ -523,12 +523,12 @@ registerView({
         h('div.ch', h('h2', 'Node overrides'), agents ? badge('Not used in this mode', 'dash', 'membership is agents') : h('span.note', plural(names.length, 'override')), h('span.grow'),
           agents ? null : button('Add an override', () => editOverride(null), 'sm', { 'data-act': 'add-override' })),
         h('p.trs-help', agents ? 'Zones run potluck-agent and report their own addresses, so overrides are not used. They apply only with membership fleet.'
-          : 'Use a fixed rpc-server address for a zone instead of the one the fleet console reports.'),
+          : 'Use a fixed rpc-server address for a zone instead of the one the legacy fleet feed reports.'),
         names.length ? h('ul.trs-list', names.map(n => h('li', { key: 'ov-' + n },
           h('span.mono', n), h('span.mut', '→'), h('span.mono.grow', (o[n] || {}).rpc || DASH), same(o[n], o0[n]) ? null : badge('Unsaved', 'q'),
           agents ? null : button('Edit', () => editOverride(n), 'sm'),
           button('Remove', () => edit(w => { delete w.overrides[n]; }), 'sm', { 'aria-label': 'Remove the override of ' + n }))))
-          : agents ? null : h('p.trs-none.mut', 'No overrides: every zone uses the address the fleet console reports.'));
+          : agents ? null : h('p.trs-none.mut', 'No overrides: every zone uses the address the legacy fleet feed reports.'));
     }
 
     // "Zones and their tier": the tier each zone is in now, ONLY from the

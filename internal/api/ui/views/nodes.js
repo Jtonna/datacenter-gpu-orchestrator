@@ -161,7 +161,7 @@ function startupPart(n, last, refresh) {
       marks = h('div', { style: 'display:flex;flex-direction:column;gap:3px' },
         h('span.mut', 'Seconds since its kernel started' + (r.userspace_start_s != null ? `; userspace started at ${secs(r.userspace_start_s)}` : '') + '.'),
         (rec.marks_in_order || []).map(m => h('div.memline', { key: m.name },
-          h('span', { title: m.name }, markLabel(m.name), m.external ? h('span.mut', ' · from the console side') : null),
+          h('span', { title: m.name }, markLabel(m.name), m.external ? h('span.mut', ' · reported by the machine') : null),
           h('span.mono', secs(m.s)))),
         requestedText(r) ? h('span', requestedText(r)) : null);
     }

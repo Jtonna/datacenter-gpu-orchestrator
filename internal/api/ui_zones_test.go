@@ -367,8 +367,8 @@ func TestUINextZonesPagingAndNoGroups(t *testing.T) {
 // Clear); a right click opens the menu for the selection (a right click on
 // an unticked zone selects that one alone). The group writes go to the v43
 // routes with the comment in the body and X-Comment; Reboot and Open SSH are
-// drawn but disabled with a plain reason (no server support, and a PS5 is
-// never rebooted from here).
+// drawn but disabled with a plain reason (Potluck cannot restart a machine
+// yet: there is no server route for it).
 func TestUINextZonesSelected(t *testing.T) {
 	fleet := znFleet()
 	st := znStatus(fleet)
@@ -412,7 +412,7 @@ func TestUINextZonesSelected(t *testing.T) {
 			"expect": []string{"2 selected", "New group", "Move to group", "Reboot", "Stop accepting models", "Force unload", "Clear"},
 			"absent": []string{"In use, darker is busier"},
 			"has":    []string{"div.fr.chk[data-zone='" + znMac(1) + "']", "button[data-bulk=reboot][disabled]", "button.red[data-bulk=force]", "button[data-bulk=newgroup]", "button[data-bulk=move]"},
-			"titles": []string{reboot, "a PS5 is never rebooted from here"}},
+			"titles": []string{"Not available: Potluck cannot restart a machine yet."}, "brandFree": true},
 		map[string]any{"name": "selected: the right-click menu", "route": "#/zones", "status": st, "click": menuOn(1, 1, 2),
 			"pageHas": []string{"div.cm[role=menu]", "button[data-cm=ssh][disabled]", "button[data-cm=reboot][disabled]", "button.red[data-cm=force]", "button[data-cm=move][aria-haspopup=true]"},
 			"page":    []string{"2 zones selected", "Move to group", "New group from selection", "Remove from group", "Open SSH", "Reboot", "Stop accepting models", "Force unload"},
@@ -509,7 +509,7 @@ func TestUINextZonesGroupPanel(t *testing.T) {
 				"div.fr.v2n[data-zone='" + znMac(1) + "']", "div.mb[role=img]"},
 			"pageNone": []string{"div.fr.v2[data-zone='" + znMac(1) + "']", "button[data-act=collapse]", "button[data-show=load]", "button[data-show=off]"},
 			"expect":   []string{"Filters", "2 in use", "1 free", "2 down"},
-			"titles":   []string{"Ping is not measured yet", "a PS5 is never rebooted from here", "the history filtered by this group"}},
+			"titles":   []string{"Ping is not measured yet", "Not available: Potluck cannot restart a machine yet.", "the history filtered by this group"}},
 		map[string]any{"name": "group: Filters shows the filters", "route": "#/zones/group/rack-a", "status": st, "width": wide,
 			"click": []any{"button[data-act=filters]"}, "expect": []string{"Chip: any", "Model: any", "Memory free: any", "Sort: needs attention first"}},
 		map[string]any{"name": "group: a filter keeps the panel open", "route": "#/zones/group/rack-a?q=node-a", "status": st, "width": wide,
@@ -559,7 +559,7 @@ func TestUINextZonesGroupPanel(t *testing.T) {
 // data exists: the name with its chip, the state line (state · group ·
 // tier), the Accepting models switch, the SSH row drawn as not available
 // yet (Copy, Open terminal disabled with the reason; the owner left SSH out
-// for now) and Reboot (disabled: a console is never rebooted from here), the
+// for now) and Reboot (disabled: Potluck cannot restart a machine yet), the
 // figures (memory with its bar, temperature, ping not measured, the
 // machine's uptime, the link speed of the last cold load or "no cold load
 // yet", 7-day uptime), what is loaded now with Force unload (the unload
@@ -580,7 +580,7 @@ func TestUINextZonesDetail(t *testing.T) {
 	typed := func(sel, v string) map[string]any { return map[string]any{"type": sel, "value": v} }
 	esc := func(s string) string { return strings.NewReplacer(":", "%3A").Replace(s) }
 	wide := 1600
-	// the agents report no host_uptime_s (an older agent; a console fed by the fleet console)
+	// the agents report no host_uptime_s (an older agent; a zone from the legacy fleet feed)
 	noUp := znStatus(fleet)
 	for _, a := range noUp["agents"].([]any) {
 		delete(a.(map[string]any), "host_uptime_s")
@@ -597,7 +597,7 @@ func TestUINextZonesDetail(t *testing.T) {
 			"notOnPage": []string{"ssh 192.0.2.11", "2 runs"},
 			"pageHas": []string{"aside.side button.switch[aria-checked=true]", "button[data-zp=terminal][disabled]", "button[data-zp=copy][disabled]", "button[data-zp=reboot][disabled]",
 				"button[data-zp=load][disabled]", "select[data-zp=profile]", "button.red[data-zp=force]", "div.wg[role=img]", "div.cmd[data-zp=ssh]", "a[data-zp=activity]"},
-			"titles": []string{"Ping is not measured yet", "a PS5 is never rebooted from here", "Not available yet: SSH from these pages is left out for now",
+			"titles": []string{"Ping is not measured yet", "Not available: Potluck cannot restart a machine yet.", "Not available yet: SSH from these pages is left out for now",
 				"Choose a profile first", "At least this fast"},
 			"fetchedQuery": []string{`^GET /api/nodes/availability\?.*node=` + esc(znMac(1)), `^GET /api/profiles`}},
 		map[string]any{"name": "detail: no cold load yet", "route": "#/zones/node-e", "status": st, "width": wide,

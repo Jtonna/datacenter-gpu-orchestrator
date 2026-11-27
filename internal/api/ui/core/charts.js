@@ -133,7 +133,7 @@ document.addEventListener('scroll', hideTip, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') hideTip(); });
 window.addEventListener('hashchange', hideTip);
 
-// tipText('Loaded 12 min ago', ['On 3 PS5s', '28 s · 251 MB/s']) -> the data-tip value
+// tipText('Loaded 12 min ago', ['On 3 zones', '28 s · 251 MB/s']) -> the data-tip value
 export const tipText = (head, lines) => [head].concat((lines || []).filter(Boolean)).join('\n');
 
 // viz(title, note, body, {legend, alt, key}) -> one chart tile: a heading, the
@@ -205,7 +205,7 @@ export function pointChart(o) {
 // loadSpark(marks, {label}) -> the "last loads" strip of a model row: one bar
 // per load, oldest left, newest right. The height is the load time, on the
 // row's own scale. The pips under a bar count the machines it loaded onto (a
-// load across three PS5s is a different thing from a load onto one, so a bar
+// load across three zones is a different thing from a load onto one, so a bar
 // is never shown without them). Mint: loaded. Coral: failed or cancelled. A
 // hollow amber stub: a request that was refused (there was no load).
 // marks: [{outcome, load_s, nodes, tip}] newest first, as the server sends them.
@@ -251,7 +251,7 @@ export function dots(marks, o = {}) {
 }
 
 // compareBars([{label, value, text, tip}], {color, label}) -> a few horizontal
-// bars on one scale (the largest value fills the track): 1 PS5, 2 PS5s, 3 PS5s.
+// bars on one scale (the largest value fills the track): 1 zone, 2 zones, 3 zones.
 // A row without a value says "not measured yet".
 export function compareBars(rows, o = {}) {
   const max = Math.max(0, ...rows.map(r => r.value || 0));

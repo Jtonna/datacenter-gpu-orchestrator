@@ -428,8 +428,8 @@ func TestUIFixtureServerPending(t *testing.T) {
 }
 
 // The fixture's agents report the machine's own uptime (host_uptime_s) when
-// reachable; --no-host-uptime: none does, as an older agent or a console fed
-// by the fleet console (the zone panel then leaves the Uptime tile out).
+// reachable; --no-host-uptime: none does, as an older agent or a zone from
+// the legacy fleet feed (the zone panel then leaves the Uptime tile out).
 func TestUIFixtureServerHostUptime(t *testing.T) {
 	for _, off := range []bool{false, true} {
 		args := []string{"--zones", "groups"}

@@ -125,11 +125,11 @@ export function loadTip(l, st) {
   return tipText(head, [when, l.profile, l.nodes ? 'On ' + machines(st, l.nodes) : null, figs || null]);
 }
 
-// inUse(m) -> "in use on ps5-01, ps5-02" (or "loading on …") for a row
+// inUse(m) -> "in use on node-01, node-02" (or "loading on …") for a row
 // whose model is loaded, each zone a link to Zones with that zone selected
 // (the owner's note 3: the row says when and where, no banner); null when
 // it is not loaded. The zones are the catalog instances' (names).
-// zoneLinks(names) -> "ps5-01, ps5-02", each a link to the zone under Zones
+// zoneLinks(names) -> "node-01, node-02", each a link to the zone under Zones
 // (a click on one does not open the row's panel)
 const zoneLinks = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone', { href: href('zones', [z]), title: 'Open ' + z + ' under Zones',
   onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
@@ -137,7 +137,7 @@ const zoneLinks = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone
 function inUse(m) {
   const all = m.instances || [];
   if (!all.length) return null;
-  // run-scoped instances are said apart, each as "test run e2 on ps5-01": never in production's zones
+  // run-scoped instances are said apart, each as "test run e2 on node-01": never in production's zones
   const tests = all.filter(i => i.scope).map(i => ['test run ' + i.scope + ((i.nodes || []).length ? ' on ' : ''), ...zoneLinks(i.nodes || [])]);
   const insts = all.filter(i => !i.scope);
   const ready = [...new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []))];
@@ -257,7 +257,7 @@ function nameSub(m, st) {
     m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null);
 }
 
-// runsOnRange(m, st, r) -> "1 to 2 PS5s": the fewest zones each end needs on
+// runsOnRange(m, st, r) -> "1 to 2 zones": the fewest zones each end needs on
 // the empty cluster (fit.budgets_mib); null when the sums are not served
 function runsOnRange(m, st, r) {
   const sums = m.fit && m.fit.budgets_mib;

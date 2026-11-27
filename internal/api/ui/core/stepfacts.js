@@ -65,7 +65,7 @@ export function reloadLine(list, nameOf) {
   return [h('span.sub', { title: RELOAD_TIP }, text), ...occ];
 }
 
-// rolesText(host, workers) -> "Host: host-1 · Workers: 2 (ps5-a, ps5-b)".
+// rolesText(host, workers) -> "Host: host-1 · Workers: 2 (node-a, node-b)".
 export function rolesText(host, workers) {
   const ws = workers || [];
   if (!host && !ws.length) return '';

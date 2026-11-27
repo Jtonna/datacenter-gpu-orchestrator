@@ -29,13 +29,11 @@ export function nodeMemory(placed) {
   return m;
 }
 
-// machines(st, n) -> "1 PS5", "3 PS5s": the pool's machines by their common
-// name when every node of the pool is a PS5, else "1 zone", "3 zones" (the
-// pages' word for a machine; the API's fields keep the word node).
+// machines(st, n) -> "1 zone", "3 zones": always the pages' word for a
+// machine, whatever the machines' host names are (the API's fields keep the
+// word node). st stays in the signature so no caller changes.
 export function machines(st, n) {
-  const pool = viewNodes(st).filter(x => !x.excluded);
-  const ps5 = pool.length > 0 && pool.every(x => /^ps5\b/i.test(x.hostname || ''));
-  return ps5 ? `${n} PS5${n === 1 ? '' : 's'}` : `${n} zone${n === 1 ? '' : 's'}`;
+  return `${n} zone${n === 1 ? '' : 's'}`;
 }
 
 // instanceBadge(inst) -> the state badge of an instance.

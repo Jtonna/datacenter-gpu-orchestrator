@@ -83,7 +83,7 @@ function loadRow(l) {
     h('td', h('span', { class: 'b ' + cls, title: l.reason || null }, word)));
 }
 
-// unloadItem(m): "gemma-4-12b on ps5-a (idle for 3 min)"
+// unloadItem(m): "gemma-4-12b on node-a (idle for 3 min)"
 function unloadItem(m) {
   const where = (m.machines || []).length ? ' on ' + andList(m.machines) : '';
   const how = m.in_flight > 0 ? ' (answering a request now: unloaded when it ends)' : m.idle_s != null ? ` (idle for ${dur(m.idle_s)})` : '';
@@ -285,8 +285,8 @@ export const notStartable = why => h('span.bp-nostart', { title: 'Not startable 
 const PHASE_ING = { load: 'loading', warmup: 'warming up', requests: 'sending the requests of', unload: 'unloading', hold: 'holding', tasks: 'running the tasks of',
   conversation: 'holding a conversation with', concurrent_requests: 'sending requests at once to', context_fill: 'filling the context of' };
 
-// stepNow(run) -> {at, total, doing}: "7", "30", "loading TEST - x on ps5-a
-// and ps5-b" (the progress document's current benchmark and phase).
+// stepNow(run) -> {at, total, doing}: "7", "30", "loading TEST - x on node-a
+// and node-b" (the progress document's current benchmark and phase).
 export function stepNow(run) {
   const cur = run.current || null;
   const total = run.steps_total || 0;
@@ -302,7 +302,7 @@ export function stepNow(run) {
   return { at, total, doing };
 }
 
-// whereNow(run): "on step 7 of 30: loading TEST - x on ps5-a and ps5-b",
+// whereNow(run): "on step 7 of 30: loading TEST - x on node-a and node-b",
 // "queued (2nd): it has not started", "waiting until idle: <reason>"
 export function whereNow(run) {
   if (run.state === 'queued') { const p = queuePos(run.id); return p ? `queued (${ordinal(p)}): it has not started` : 'queued: it has not started'; }

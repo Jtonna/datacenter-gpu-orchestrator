@@ -17,7 +17,10 @@ func TestUIStartupWording(t *testing.T) {
 	if m == nil || m[1] != StartupNotIncluded {
 		t.Fatalf("core/startup.js NOT_INCLUDED is not the server's sentence %q: %v", StartupNotIncluded, m)
 	}
-	for _, s := range []string{"cannot be seen from inside Linux", "is not included", "power-on"} {
+	if strings.Contains(strings.ToLower(StartupNotIncluded), "console") {
+		t.Errorf("the not-included sentence names a console: %q", StartupNotIncluded)
+	}
+	for _, s := range []string{"The time before the Linux kernel starts (firmware and boot loader)", "cannot be seen from inside Linux", "is not included", "power-on"} {
 		if !strings.Contains(StartupNotIncluded, s) {
 			t.Errorf("the not-included sentence lacks %q", s)
 		}
@@ -35,6 +38,7 @@ func TestUIStartupWording(t *testing.T) {
 		`const from = originText(last.origin);`,
 		`userspace: 'counted from the userspace start; the shutdown before it is not included',`,
 		`boot_origin: 'Start began',`,
+		`boot_origin_partial: 'Userspace started (reported by the machine)',`,
 	} {
 		if !strings.Contains(core, want) {
 			t.Errorf("core/startup.js lacks %s", want)

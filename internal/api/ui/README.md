@@ -208,7 +208,7 @@ Decided once, used everywhere. No chart library; inline SVG or plain boxes.
 - **Colour is state, never a series.** Mint = it worked (loaded, passed),
   coral = failed or cancelled, amber = refused or partly passed, grey = no
   result or a neutral quantity (requests served, a duration line).
-- **The number of machines is a shape, not a colour.** 1 PS5 = circle, 2 =
+- **The number of machines is a shape, not a colour.** 1 zone = circle, 2 =
   square, 3 = triangle (`shapeOf(n)`); in the small "last loads" strip it is
   the count of pips under a bar. Loads on different node counts take very
   different times, so a load time is never drawn without its node count, and
@@ -234,7 +234,7 @@ Decided once, used everywhere. No chart library; inline SVG or plain boxes.
 - **Text alternative.** A tile is `viz(title, note, body, {legend, alt})`: `alt`
   is one sentence with the figures, read by a screen reader (`p.sr`) and set as
   the chart's `aria-label`. Write it from the data, not "a chart of".
-- **Legend.** Under the chart, only what is in it: `legendItems([[shapeSwatch('square'), '2 PS5s'], [colorSwatch('coral'), 'Failed']])`.
+- **Legend.** Under the chart, only what is in it: `legendItems([[shapeSwatch('square'), '2 zones'], [colorSwatch('coral'), 'Failed']])`.
 
 | Chart | Call | Use |
 |---|---|---|
@@ -385,8 +385,8 @@ The patterns were written from the strings the real system produced
 (`cmd/devcluster/realdata`); an unknown wording is only tidied, never guessed.
 When the scheduler gains a reason, add its pattern there.
 
-Status helpers (`core/status.js`): `machines(st, n)` ("3 PS5s", or "3 nodes"
-when the pool is mixed), `nodeName(st, id)`, `findNode(st, idOrHost)`,
+Status helpers (`core/status.js`): `machines(st, n)` ("3 zones",
+whatever the host names), `nodeName(st, id)`, `findNode(st, idOrHost)`,
 `nodeByAddr(st, addr)`, `instanceNodeNames(st, inst)`, `nodeMemory(placed)`,
 `instanceBadge(inst)`, `healthBadge(node)`, `machineBadge(st, node)` (agents
 membership: "Paused" or "Not placeable" with the reason on hover, else null),

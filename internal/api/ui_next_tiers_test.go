@@ -143,7 +143,8 @@ func TestUINextTiers(t *testing.T) {
 	fleet := mcpCopy(t, st)
 	fleet["membership"] = "fleet"
 	run(fetch, map[string]any{"name": "tiers: fleet, overrides", "route": "#/tiers", "status": fleet,
-		"expect": []string{"Node overrides", "0 overrides", "No overrides: every zone uses the address the fleet console reports."},
+		"expect": []string{"Node overrides", "0 overrides", "No overrides: every zone uses the address the legacy fleet feed reports.",
+			"Use a fixed rpc-server address for a zone instead of the one the legacy fleet feed reports."},
 		"has":    []string{"button[data-act=add-override]"}, "none": []string{"Not used in this mode"}})
 }
 
