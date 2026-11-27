@@ -118,12 +118,17 @@ func startCluster(t *testing.T, o options) *cluster {
 	if o.exclude != "" {
 		excludeLine = "exclude_nodes: " + o.exclude + "\n"
 	}
+	// The cluster is written for the legacy fleet path unless a test says
+	// membership agents (the built-in default is agents since build-92).
+	defaults := o.defaults
+	if !strings.Contains(defaults, "membership:") {
+		defaults = "  membership: fleet\n" + defaults
+	}
 	cfg := fmt.Sprintf(`listen: "127.0.0.1:%d"
 fleet: {url: "%s", local_node: host-1, stale_after: 60s}
 models_dir: "%s"
 local_probe_cmd: "%s --nvidia-smi 8151 0"
 defaults:
-  membership: fleet
   ttl: 0s
   min_hold: 1ms
   max_hold: 1s
@@ -137,7 +142,7 @@ defaults:
   - {match: {local: true}, priority: 3, headroom_mib: 256, settle: 100ms}
 %s%sprofiles:
 %s
-`, port, fleetURL, slash(models), slash(fake), slash(fake), o.defaults, excludeLine, o.topLevel, o.profiles)
+`, port, fleetURL, slash(models), slash(fake), slash(fake), defaults, excludeLine, o.topLevel, o.profiles)
 	cfgPath := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
