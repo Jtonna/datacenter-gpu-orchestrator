@@ -126,3 +126,14 @@ func TestUINextPlacementMemoryUnits(t *testing.T) {
 	}
 	uiExec(t, map[string]any{"modules": []string{"views/placement.js"}, "fetch": map[string]any{}, "cases": cases})
 }
+
+// W3.1: on the Benchmarks Overview the "Recent runs" card stands above
+// "Latest result for each model" (the owner's walkthrough, build-92).
+func TestUINextBenchWalkthroughOverviewOrder(t *testing.T) {
+	f := benchBoards(t)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": f, "cases": []any{
+		map[string]any{"name": "W3.1: Recent runs above the latest results", "route": "#/benchmarks", "status": f["/api/status"],
+			"order": []string{"Recent runs", "All 49", "Latest result for each model"},
+			"has":   []string{"section.bp-recentcard", "section.bp-latest"}},
+	}})
+}

@@ -62,14 +62,15 @@ function overview(ov, res) {
     h('h1.sr', 'Benchmarks'),
     run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: runABenchmark() }))
       : h('div.bp-tools', h('span.grow'), runABenchmark()),
-    h('section.card.bp-latest', { 'aria-label': 'Latest result for each model' },
-      h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), latestHead(res)),
-      latestTable(res)),
+    // Recent runs above the latest result for each model (the owner's walkthrough, build-92 W3)
     h('section.card.bp-recentcard', { 'aria-label': 'Recent runs' },
       h('div.ch', h('h2', 'Recent runs'), h('span.grow'), h('a', { href: href('benchmarks', ['runs']) }, ov.total != null ? `All ${num(ov.total)}` : 'All runs')),
       ov.err ? h('div.banner.err', { role: 'alert' }, ov.err) : null,
       ov.runs == null ? skeleton(4) : ov.runs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Recent runs' }, ov.runs.map(recentRow))
         : empty('No runs yet', 'A run appears here when it is queued.')),
+    h('section.card.bp-latest', { 'aria-label': 'Latest result for each model' },
+      h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), latestHead(res)),
+      latestTable(res)),
   ];
 }
 
