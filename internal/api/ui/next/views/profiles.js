@@ -292,6 +292,14 @@ function whereText(e, plan, inst) {
   return n ? h('span', { 'data-would': String(n) }, (now ? 'on ' : 'would load on ') + machines(st, n)) : null;
 }
 
+// prfFacts(pairs) -> core facts() with prose values: the panel's values are
+// sans at the body weight, a figure or an id says span.mono itself
+function prfFacts(pairs) {
+  const dl = facts(pairs);
+  dl.classList.add('prf-facts');
+  return dl;
+}
+
 // panelBody(id, e, spec): the profile's config (a GET /api/profiles row and,
 // once read, its spec: undefined while reading, null when it could not be read)
 function panelBody(id, e, spec) {
@@ -304,25 +312,27 @@ function panelBody(id, e, spec) {
   const xa = spec && spec.extra_args;
   return [
     e.description ? h('p.prf-desc', { key: 'desc' }, e.description) : null,
-    h('section.prf-part', { key: 'facts' }, facts([
+    // the values: sans at the body weight (dl.prf-facts); mono only for ids,
+    // file names, flags and figures (the reviewer, build-92)
+    h('section.prf-part', { key: 'facts' }, prfFacts([
       ['Model', h('span', { title: e.model }, shortModel(e.model) || e.model || '–')],
-      ['Model file', h('span', { title: e.model }, e.model || '–')],
-      e.kind === 'command' ? ['Kind', 'command'] : ['Context', e.ctx ? ctx(e.ctx) : '–'],
-      (e.parallel || 1) > 1 ? ['Parallel slots', String(e.parallel)] : null,
-      (e.aliases || []).length ? ['Aliases', e.aliases.join(', ')] : null,
-      e.needs_mib ? ['Memory need', h('span', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : '') }, gb(e.needs_mib))] : null,
+      ['Model file', h('span.mono', { title: e.model, 'data-fact': 'file' }, e.model || '–')],
+      e.kind === 'command' ? ['Kind', 'command'] : ['Context', e.ctx ? h('span.mono', { 'data-fact': 'ctx' }, ctx(e.ctx)) : '–'],
+      (e.parallel || 1) > 1 ? ['Parallel slots', h('span.mono', String(e.parallel))] : null,
+      (e.aliases || []).length ? ['Aliases', h('span.mono', e.aliases.join(', '))] : null,
+      e.needs_mib ? ['Memory need', h('span.mono', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : ''), 'data-fact': 'need' }, gb(e.needs_mib))] : null,
       e.needs_mib && e.needs_basis ? ['Worked out', h('span', { title: e.needs_basis }, plainBasis(e.needs_basis))] : null,
       // the restore points it keeps on the hosting machine, and where the number comes from (build-92 W1)
       rp ? ['Restore points', h('span', { 'data-restore-points': String(rp.n), title: e.host_memory.checkpoints_from || null },
-        num(rp.n) + ' (' + num(Math.round(rp.mib || 0)) + ' MB)' + (rp.own ? ' · its own, from its extra arguments' : ' · the cluster default'))] : null,
+        h('span.mono', num(rp.n) + ' (' + num(Math.round(rp.mib || 0)) + ' MB)'), rp.own ? ' · its own, from its extra arguments' : ' · the cluster default')] : null,
       // its extra arguments as written, and when it unloads (build-92 W2)
       e.kind === 'command' ? null : ['Extra arguments', spec === undefined ? h('span.mut', 'reading…') : spec === null ? h('span.mut', 'could not be read')
         : (xa || []).length ? h('span.mono', { 'data-extra-args': '' }, xa.join(' ')) : h('span.mut', { 'data-extra-args': '' }, 'none')],
       typeof e.ttl_s === 'number' ? ['Unload when idle', h('span', { 'data-ttl': String(e.ttl_s) }, e.ttl_s > 0 ? 'after ' + dur(e.ttl_s) : 'never')] : null,
       ['Stage', h('span', { 'data-stage': profileStage(e) }, profileStage(e) === 'test' ? 'Test (' + testWhy(e) + ')' : 'Production' + (e.stage_set ? '' : ' (not marked: the rule)'))],
       e.display_name ? ['Display name', e.display_name] : null,
-      ['Id', h('span.mono', e.id)],
-      ['Generated', e.generated ? 'yes, for benchmarks' : 'no, made by hand'],
+      ['Id', h('span.mono', { 'data-fact': 'id' }, e.id)],
+      ['Generated', h('span', { 'data-fact': 'generated' }, e.generated ? 'yes, for benchmarks' : 'no, made by hand')],
     ])),
     h('section.prf-part', { key: 'placement' }, h('h3', 'Placement'),
       force.length ? [h('div', h('span.mut', 'Forced on ' + plural(force.length, 'zone') + ': '), nodeChips(force)),
