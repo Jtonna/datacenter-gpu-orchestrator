@@ -1868,7 +1868,7 @@ a.bp-view:hover{background:var(--hover-bg)}
 .ed-left{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}
 .ed-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto;min-width:0}
 .ed-comment{width:280px;max-width:100%}
-.ed-refused{color:var(--coral-text);font-weight:600}
+.ed-refused{color:var(--coral-text);font-weight:600;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
 .ed-lines{display:inline-flex;flex-direction:column;gap:2px;vertical-align:top}
 .bp-changed{margin:0}
 .bp-hacts{display:flex;gap:6px;align-items:center}

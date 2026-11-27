@@ -150,22 +150,28 @@ export function keptWords(kind, o) {
   }
   if (o.inputs) out.push('inputs');
   if ((o.parallel || []).length) out.push('parallel');
-  const reqs = [].concat(o.requests || [], ...(o.phases || []).map(p => [].concat(p.requests || [], p.turns || [], p.request ? [p.request] : [])));
-  if (reqs.some(q => q && REQ_OWN.some(k => q[k] != null))) out.push("a request's own sampling");
-  if (reqs.some(q => q && (q.messages || []).length)) out.push('messages');
+  const reqs = [].concat(o.requests || [], ...(o.phases || []).map(p => [].concat(p.requests || [], p.turns || [])));
+  // a phase's single request (a warm-up's): its own stream is not counted
+  const single = (o.phases || []).map(p => p.request).filter(Boolean);
+  if (reqs.some(q => q && REQ_OWN.some(k => q[k] != null)) || single.some(q => REQ_OWN.some(k => k !== 'stream' && q[k] != null))) out.push("a request's own sampling");
+  if (reqs.concat(single).some(q => q && (q.messages || []).length)) out.push('messages');
   return out;
 }
 const keptLine = words => (words.length ? h('div.ed-kept', { 'data-kept': words.join(',') },
   `This one also has settings this page does not show (${words.join(', ')}): they are kept as they are.`) : null);
 
+// firstLine(refusal): the sentence the bar shows of several: one that names
+// no part first (no field shows it), else the first
+const firstLine = r => { const i = (r.problems || []).findIndex(p => !p.path); return r.lines[i >= 0 ? i : 0] || ''; };
 // saveBar(o): the bar at the foot of the card (sticky). o = {changed: words,
 // fresh, refusal: {lines}, saving, onDiff, onCancel, onSave, comment input,
 // kept: the settings not drawn (keptWords)}
 function saveBar(o) {
   const can = !o.saving && (o.fresh || o.changed.length) && o.comment.value.trim();
   const left = o.refusal
-    ? h('div.ed-refused', { role: 'alert', 'data-refused': '' }, h('b', 'Not saved.'), ' ', o.refusal.lines.length > 1
-      ? h('span.ed-lines', o.refusal.lines.map((l, i) => h('span', { key: 'l' + i, 'data-line': i }, l)))
+    ? h('div.ed-refused', { role: 'alert', 'data-refused': '', title: o.refusal.lines.length > 1 ? o.refusal.lines.join('\n') : null }, h('b', 'Not saved.'), ' ', o.refusal.lines.length > 1
+      // several: the count and one of them, at most two lines; the parts keep their own sentences
+      ? h('span', { 'data-line': 0, 'data-count': o.refusal.lines.length }, `${num(o.refusal.lines.length)} problems; the first: `, firstLine(o.refusal))
       : h('span', { 'data-line': 0 }, o.refusal.lines[0] || ''))
     : h('span.note-s.ed-what', { 'data-changed': o.changed.length ? '' : null },
       o.fresh && !o.changed.length ? 'New: nothing is saved yet.' : o.changed.length ? ['Changed: ', andList(o.changed.slice(0, 4)), o.changed.length > 4 ? ` and ${num(o.changed.length - 4)} more` : '', '. ',
@@ -382,8 +388,10 @@ export function benchEditor(er) {
       else line = [badge('no', 'Would not fit'), ' ', p.reason || 'no zones can hold it'];
       kids.push(h('span.ed-planline', { 'data-plan': p.action || '' }, line));
       const host = (p.placement || []).find(n => n.role === 'host');
+      // the zone's name: the plan's own name for that node, else the zones' names; the id only when there is none
+      const hostName = host ? (nodes.find(n => n.id === host.id && n.node) || {}).node || nodeName(host.id) : '';
       const need = p.fit_need_mib || p.need_mib;
-      kids.push(h('span.note-s', need ? `Need ${num(need)} MiB, ${p.need_basis || (p.measured ? 'measured' : 'estimated')}.` : 'Need not known.', host ? ` Host on ${nodeName(host.id)}.` : ''));
+      kids.push(h('span.note-s', need ? `Need ${num(need)} MiB, ${p.need_basis || (p.measured ? 'measured' : 'estimated')}.` : 'Need not known.', host ? ` Host on ${hostName}.` : ''));
     }
     return h('div.ed-what', { 'data-would-load': '' }, kids);
   }
@@ -584,7 +592,7 @@ export function benchEditor(er) {
             oninput: e => { const x = Object.assign({}, st.b.expect || {}); const v = k.type === 'string' ? e.currentTarget.value.trim() || undefined : numOf(e.currentTarget.value); if (v === undefined) delete x[k.name]; else x[k.name] = v; set('expect', Object.keys(x).length ? x : undefined); } }),
             k.unit ? h('span.mut', k.unit) : null))))] : null,
         problemNote(fieldBad('expect').concat(fieldBad('timeout_s')))),
-      saveBar({ kept: keptWords('benchmark', st.b), changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
+      saveBar({ kept: st.fresh ? [] : keptWords('benchmark', st.b), changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
         onCancel: () => navigate('benchmarks', ['all']) }),
     ]);
   }
@@ -766,7 +774,7 @@ export function groupEditor(er) {
             h('span.mut', 'seconds · then the run is skipped')))),
         notYet(h('span.check.ed-check.off', h('input', { type: 'checkbox', disabled: true }), h('span', h('b', 'Cold loads'), h('span.mut', ' · not available yet'))), WHY.b7),
         problemNote(['cooldown_s', 'idle_wait_s', 'only_when_idle', 'stop_on_failure', 'evict_others', 'schedule', 'baseline', 'status', 'reason'].flatMap(fieldBad))),
-      saveBar({ kept: keptWords('group', st.g), changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
+      saveBar({ kept: st.fresh ? [] : keptWords('group', st.g), changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
         onCancel: () => { location.hash = back(); } }),
     ]);
   }

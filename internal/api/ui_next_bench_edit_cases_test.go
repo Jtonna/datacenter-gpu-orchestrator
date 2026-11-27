@@ -124,9 +124,23 @@ func TestUINextBenchEditors(t *testing.T) {
 					map[string]any{"path": "expect.outcome", "message": `expect.outcome: "maybe" is not one of ready, refused, failed`},
 					map[string]any{"path": "", "message": "the definition is larger than 1 MiB"}}}}),
 			"click": []any{comment("x"), ".ed-savebar button[data-act=save]"},
-			"has":   []string{".ed-savebar.bad [data-refused] [data-line='3']", ".ed-phase.bad[data-phase='1']", ".ed-phase.bad[data-phase='2']"},
-			"expect": []string{"Phase 2: count must be 0 to 8", `Phase 3, prompt "explain": messages or prompt is required`,
-				`expect.outcome: "maybe" is not one of ready, refused, failed`, "the definition is larger than 1 MiB"}},
+			// several: the bar says how many and one of them (the one no part shows), the parts keep their own sentences
+			"has":    []string{".ed-savebar.bad [data-refused] [data-line='0'][data-count='4']", ".ed-phase.bad[data-phase='1'] [data-problem]", ".ed-phase.bad[data-phase='2'] [data-problem]"},
+			"none":   []string{".ed-savebar [data-line='1']"},
+			"expect": []string{"Not saved. 4 problems; the first: the definition is larger than 1 MiB", `expect.outcome: "maybe" is not one of ready, refused, failed`},
+			"titles": []string{`Phase 3, prompt "explain": messages or prompt is required`}},
+		map[string]any{"name": "editors 3: one problem, the place first", "route": "#/benchmarks/new/cold-reload-loaded", "status": st,
+			"fetch": withAnswer(f, "POST /api/bench/benchmarks", map[string]any{"$status": 422, "$body": map[string]any{
+				"error":    map[string]any{"message": "x", "code": 422, "reason": "invalid"},
+				"problems": []any{map[string]any{"path": "phases[1]", "message": "phases[1] (warmup): count must be 0 to 8"}}}}),
+			"click":  []any{comment("x"), ".ed-savebar button[data-act=save]"},
+			"expect": []string{"Not saved. Phase 2: count must be 0 to 8"}},
+		// the host is named by its zone's name: the plan's own name for the node when the zones list does not carry it, never its id
+		map[string]any{"name": "editors 2: the host by its zone's name, also without the zones list", "route": "#/benchmarks/benchmark/qwen4b-2con/edit", "status": withoutZones(st),
+			"expect": []string{"Need 3,400 MiB, measured, needs_mib. Host on ps5-01."}, "absent": []string{"Host on 02:"}},
+		// a new benchmark from a template never says it keeps settings (only a stored one can)
+		map[string]any{"name": "editors: a new benchmark from a template has no kept line", "route": "#/benchmarks/new/cold-reload-loaded", "status": st,
+			"none": []string{".ed-kept"}},
 		map[string]any{"name": "editors 4: a new group", "route": "#/benchmarks/group/new", "status": st,
 			"has": []string{"input[name=id]:not([disabled])"}, "expect": []string{"New group", "No entries yet.", "New: nothing is saved yet."}},
 		// what a save does to past runs: the run keeps what it ran and says the definition changed since
@@ -169,5 +183,23 @@ func withGroupEntries(g any, entries []any) any {
 		m[k] = v
 	}
 	m["benchmarks"] = entries
+	return m
+}
+
+// withoutZones(status): the status with no zones in its view (the page then
+// cannot look a zone's name up by id)
+func withoutZones(st any) any {
+	m := map[string]any{}
+	for k, v := range st.(map[string]any) {
+		m[k] = v
+	}
+	if v, ok := m["view"].(map[string]any); ok {
+		vv := map[string]any{}
+		for k, x := range v {
+			vv[k] = x
+		}
+		vv["nodes"] = []any{}
+		m["view"] = vv
+	}
 	return m
 }

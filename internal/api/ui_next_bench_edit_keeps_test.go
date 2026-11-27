@@ -34,6 +34,8 @@ func TestUINextBenchEditorKeepsWhatItDoesNotDraw(t *testing.T) {
 	save("POST", "/api/bench/groups", `{"id":"wide","name":"Wide","description":"every field","cooldown_s":7,"idle_wait_s":300,"only_when_idle":false,"evict_others":true,"stop_on_failure":true,
 		"schedule":{"every":"24h"},"baseline":"run-1",
 		"benchmarks":["rich",{"benchmark":"lo-recipe","inputs":{"model":"m2.gguf"}},{"benchmark":"lo-recipe","matrix":{"model":["m2.gguf","m3.gguf"]}}],"comment":"setup"}`, 201)
+	// a warm-up's request with its own stream: not a setting the page hides
+	save("POST", "/api/bench/benchmarks", `{"id":"warm","name":"Warm","profile":"alpha","phases":[{"type":"load"},{"type":"warmup","count":1,"request":{"name":"first","prompt":"hi","max_tokens":16,"stream":true}},{"type":"unload"}],"comment":"setup"}`, 201)
 	// a planned group cannot have a schedule (the server): its status is on a group of its own
 	save("POST", "/api/bench/groups", `{"id":"later","name":"Later","status":"planned","reason":"the fifth console is not set up yet",
 		"benchmarks":[{"benchmark":"lo-recipe","matrix":{"model":["m2.gguf","m3.gguf"]}}],"comment":"setup"}`, 201)
@@ -71,6 +73,8 @@ func TestUINextBenchEditorKeepsWhatItDoesNotDraw(t *testing.T) {
 			map[string]any{"name": "the planned group renamed and saved", "route": "#/benchmarks/group/later/edit",
 				"click": []any{typeIn("input[name=name]", "Later, renamed"), typeIn(".ed-savebar input[aria-label=Comment]", "rename only"), ".ed-savebar button[data-act=save]"},
 				"hash":  "#/benchmarks/all/later?saved=later"},
+			map[string]any{"name": "a warm-up request's own stream is not counted", "route": "#/benchmarks/benchmark/warm/edit",
+				"has": []string{"input[name=name]"}, "none": []string{".ed-kept"}},
 			map[string]any{"name": "a benchmark with nothing undrawn says nothing", "route": "#/benchmarks/new/load-only",
 				"none": []string{".ed-kept"}},
 		}})
