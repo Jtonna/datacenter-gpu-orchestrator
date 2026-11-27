@@ -125,8 +125,10 @@ export function tookS(r) {
 // ---------- results ----------
 
 // The icon of a run's result (B1 `result`): Passed, Failed, Refused,
-// Running, Queued; a cancelled run shows the Failed icon, as drawn.
-const RESULT_ICON = { passed: 'done', with_issues: 'done', failed: 'failed', cancelled: 'failed', refused: 'refused', running: 'running',
+// Running, Queued. A cancelled run or step is a neutral grey dash, not the
+// red cross (the owner's walkthrough, build-92: nothing failed); failed and
+// timed out keep the red cross.
+const RESULT_ICON = { passed: 'done', with_issues: 'done', failed: 'failed', cancelled: 'stopped', refused: 'refused', running: 'running',
   queued: 'queued', waiting: 'queued', skipped: 'cancelled', not_judged: 'cancelled' };
 const RESULT_WORD = { passed: 'Passed', with_issues: 'Passed with issues', failed: 'Failed', cancelled: 'Cancelled', refused: 'Refused', running: 'Running',
   queued: 'Queued', waiting: 'Waiting until the zones are idle', skipped: 'Skipped',
@@ -138,6 +140,7 @@ export const resultOf = r => (r && (r.result || (r.state === 'completed' ? 'pass
 const BOARD_ICON = {
   done: () => [h('path', { d: 'M3.5 8.5l3 3 6-7', fill: 'none', stroke: 'var(--up)', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })],
   refused: () => [h('circle', { cx: 8, cy: 8, r: 6.2, fill: 'none', stroke: 'var(--queued)', 'stroke-width': 1.8 }), h('path', { d: 'M5 8h6', stroke: 'var(--queued)', 'stroke-width': 1.8, 'stroke-linecap': 'round' })],
+  stopped: () => [h('path', { d: 'M4 8h8', stroke: 'var(--cancelled)', 'stroke-width': 2.2, 'stroke-linecap': 'round' })],
 };
 export function resultIcon(r, size = 16) {
   const res = resultOf(r);
@@ -305,7 +308,7 @@ export const WHY = {
   coding: 'the Coding figures need task scores per model and a default scorer, which no route serves yet (benchmarks slice 4: B5 Coding, B15)',
   b6: 'a group cannot ask for "the smallest that fits" yet: the placements are auto, all, any N or named zones (benchmarks slice 7: B6)',
   b7: 'a group has no "cold loads" option yet; a benchmark asks for a cold load in its own load step (benchmarks slice 7: B7)',
-  b10: 'comparing two runs has no route and no mockup of its view yet (route: benchmarks slice 5, B10; the view waits for a mockup)',
+  b10: 'comparing two runs is not built yet; it needs a server route first (benchmarks slice 5: B10)',
   b11: 'what stopped a run (a machine dropping out) is not read from the history yet (benchmarks slice 5: B11)',
   b13: 'one-click PDF is not served yet: open the full report and print it (benchmarks slice 5: B13)',
   recipe: 'a recipe asks for its inputs (model, placement, context) before it runs, and that dialog has no mockup yet (benchmarks slice 6 drew the run dialog without inputs)',

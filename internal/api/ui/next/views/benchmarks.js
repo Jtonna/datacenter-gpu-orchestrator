@@ -22,7 +22,7 @@
 
 import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
-import { state } from '../core/store.js';
+import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, empty, skeleton } from '../core/ui.js';
 import { num, DASH } from '../core/format.js';
@@ -120,6 +120,25 @@ registerView({
       side = make();
     };
     const offBench = onBench(() => { if (alive) { view.refresh(); if (side) side.redraw(); if (ed) ed.redraw(); } });
+    // the runs behind a panel follow the runs' lives: when the run in
+    // progress ends (finished or cancelled) or the queue changes, the Runs
+    // list and the Overview's recent runs are read again, so a cancelled
+    // row does not keep the running mark until a reload (build-92 s2). The
+    // first bench state (the seed) only sets the starting point.
+    const runSig = () => {
+      const a = activeRun(), q = (state.bench.state && state.bench.state.queue) || [];
+      return (a ? a.id + ':' + a.state : '') + '|' + q.map(x => x.id).join(',');
+    };
+    let lastSig = state.bench.state ? runSig() : null;
+    const offRuns = on('bench', () => {
+      if (!alive || !state.bench.state) return;
+      const sig = runSig();
+      if (lastSig != null && sig !== lastSig) {
+        rd.key = '';
+        if (pageOf(r) === 'overview') { loadOverview(); readResults(); } else view.refresh();
+      }
+      lastSig = sig;
+    });
     const offCatalog = onCatalog(() => { if (alive) { view.refresh(); if (side) side.redraw(); } });
     const setQ = v => { query = v; view.refresh(); };
     const render = () => {
@@ -157,7 +176,7 @@ registerView({
         syncSide();
         view.refresh();
       },
-      unmount() { alive = false; offBench(); offCatalog(); closeSide(); if (ed) { ed.close(); ed = null; } view.unmount(); },
+      unmount() { alive = false; offBench(); offRuns(); offCatalog(); closeSide(); if (ed) { ed.close(); ed = null; } view.unmount(); },
     };
   },
 });

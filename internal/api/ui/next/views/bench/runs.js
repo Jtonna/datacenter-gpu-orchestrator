@@ -102,11 +102,15 @@ function runRow(rn, q) {
 
 // againButton(run, cls): "Run again" (the run dialog with again_of); a recipe
 // run asks for its inputs, a dialog not drawn yet: greyed with its reason.
+// Only a recipe run: the server gives EVERY direct run `inputs` (the
+// profile, model and zone count its first step used, bench.directInputs),
+// so `inputs` alone greyed Run again on every direct run, a cancelled one
+// included (build-92 s3); a recipe run's inputs name its recipe.
 const benchmarkOf = rn => (bench.benchmarks || []).find(b => b.id === rn.benchmark_id) || null;
 // A run still going has no Run again: Cancel is its only live action.
 function againButton(rn, cls) {
   if (ACTIVE.includes(rn.state)) return null;
-  if (rn.kind === 'benchmark' && (rn.inputs || isRecipe(benchmarkOf(rn)))) return notYet(h('span', { class: cls }, 'Run again'), WHY.recipe);
+  if (rn.kind === 'benchmark' && ((rn.inputs && rn.inputs.recipe) || isRecipe(benchmarkOf(rn)))) return notYet(h('span', { class: cls }, 'Run again'), WHY.recipe);
   if (rn.kind === 'benchmark' ? !rn.benchmark_id : !rn.suite_id) return null;
   return runButton(rn.kind === 'benchmark' ? 'benchmark' : 'group', rn.kind === 'benchmark' ? rn.benchmark_id : rn.suite_id, 'Run again', cls, rn.id);
 }
@@ -281,7 +285,9 @@ export function runPanel(ref, q, onClose) {
     const shown = ps.showAll ? steps : steps.slice(0, 8);
     return h('div.bp-panel',
       liveBanner(rn, load),
-      h('div.bp-kpis', kpi(num(c.done != null ? c.done : steps.length), 'ran'), kpi(num((c.passed || 0) + (c.with_issues || 0)), 'passed', 'ok'),
+      // "ran" counts the entries that ran to their end: a cancelled, skipped
+      // or interrupted one is "not run", never "ran" (build-92)
+      h('div.bp-kpis', kpi(num(Math.max(0, (c.done != null ? c.done : steps.length) - notRun)), 'ran'), kpi(num((c.passed || 0) + (c.with_issues || 0)), 'passed', 'ok'),
         kpi(num(failedN), 'failed', failedN ? 'bad' : ''), notRun ? kpi(num(notRun), 'not run', 'notrun') : null, kpi(num(c.refused || 0), 'refused', c.refused ? 'ref' : ''),
         kpi(tookS(rn) != null ? dur(tookS(rn)) : DASH, active ? 'so far' : 'total', 'time')),
       rn.error ? h('div.banner.err', { role: 'status' }, rn.error) : null,
@@ -318,7 +324,8 @@ export function runPanel(ref, q, onClose) {
     if (rn.kind === 'benchmark' && inputsLine(rn)) parts.push(' · ', inputsLine(rn));
     return parts;
   };
-  const p = sidePanel({ closesMenu: true, kind: 'bench-run', label: 'Group run', name: 'Run ' + ref,
+  // headed "Group run" for a group's run, "Run" for a single benchmark's (build-92 s4)
+  const p = sidePanel({ closesMenu: true, kind: 'bench-run', label: () => (ps.run && ps.run.kind !== 'benchmark' ? 'Group run' : 'Run'), name: 'Run ' + ref,
     title: () => (ps.run ? ps.run.suite_name || ps.run.suite_id || ps.run.id : 'Run ' + ref), sub,
     // a run still going: its Cancel is the banner's, beside the step it stops (board bench-run/run-cancel #6;
     // the review of 26 Nov: one Cancel in one panel), and it has no Run again

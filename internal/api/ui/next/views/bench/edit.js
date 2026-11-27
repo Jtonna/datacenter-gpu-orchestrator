@@ -211,8 +211,10 @@ export function placed(p) {
 }
 // sentences(texts) -> one text, each sentence ending in its full stop
 const sentences = xs => xs.map(x => String(x || '').trim()).filter(Boolean).map(x => (/[.!?]$/.test(x) ? x : x + '.')).join(' ');
-// the sentences that name a part (path, or a part below it)
-const about = (ref, path) => (ref ? ref.problems.filter(p => p.path === path || (p.path || '').startsWith(path + '.') || (p.path || '').startsWith(path + '[')).map(p => p.message) : []);
+// the sentences that name a part (path, or a part below it), each with its
+// place in the page's words as the save bar says it (placed), never the raw
+// path ("phases[2].requests[0] (explain): ..."; build-92 s6)
+const about = (ref, path) => (ref ? ref.problems.filter(p => p.path === path || (p.path || '').startsWith(path + '.') || (p.path || '').startsWith(path + '[')).map(placed) : []);
 const problemNote = lines => (lines.length ? h('div.ed-problem', { 'data-problem': '' }, lines.map((l, i) => h('div', { key: 'p' + i }, l))) : null);
 
 // ---------- the editor shell (both editors) ----------

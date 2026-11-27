@@ -32,8 +32,10 @@ export function num(v, digits = 0) {
 // detail tables and tooltips only.
 export const mib = v => (v == null ? DASH : nf0.format(Math.round(v)) + ' MiB');
 // gb(mib) -> "7.2 GB"; gbNum(mib) -> "7.2" (for a figure with its unit set apart).
+// Under 1 GB gb() says MB, as the Models page does for a small size: 151 ->
+// "151 MB", never "0.1 GB" (the owner's walkthrough, build-92); 1,608 -> "1.6 GB".
 export const gbNum = v => (v == null || Number.isNaN(v) ? DASH : nf1.format(v / 1024));
-export const gb = v => (v == null || Number.isNaN(v) ? DASH : gbNum(v) + ' GB');
+export const gb = v => (v == null || Number.isNaN(v) ? DASH : Math.abs(v) < 1023.5 ? nf0.format(Math.round(v)) + ' MB' : gbNum(v) + ' GB');
 export function gib(v) { return gb(v); }
 // bytes(n) -> "6.6 GB", "638 MB": the same GB as memory (2^30 bytes).
 export function bytes(v) {

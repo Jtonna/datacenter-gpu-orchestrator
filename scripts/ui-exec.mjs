@@ -649,6 +649,14 @@ for (const c of spec.cases) {
       store.publish(m.type, m.data, Date.now());
       await settle();
     }
+    // benchRunAfter: the run in progress after that (a progress document, or
+    // null when it ended), set as core/live.js sets it from the "bench"
+    // topic, then the "bench" key emitted
+    if ('benchRunAfter' in c) {
+      store.state.bench.run = c.benchRunAfter;
+      store.emit('bench');
+      await settle();
+    }
     // keys: key presses after that, sent to the focused element (or the body)
     // and up through its ancestors to the document, as a browser does
     for (const k of c.keys || []) {
