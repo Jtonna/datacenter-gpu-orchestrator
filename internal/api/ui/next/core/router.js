@@ -131,8 +131,40 @@ export function navigate(id, rest, query, replace) {
 
 export function onRoute(fn) { onChange.add(fn); return () => onChange.delete(fn); }
 
+// ---------- leaving a page with unsaved changes ----------
+//
+// setLeaveGuard(ask) while a page holds unsaved changes (an editor), null
+// when it holds none. On a change of the address (a link, Back, a menu
+// item) the page is not left: the address goes back to the page's own and
+// ask(to) is called; it resolves true to leave (the guard is dropped and the
+// address is taken), false to stay. A reload or a closed tab gets the
+// browser's own question. The page drops its guard when it is left or saved.
+let guard = null, guarded = '', asking = false;
+export function setLeaveGuard(ask) {
+  guard = ask || null;
+  guarded = guard ? location.hash : '';
+}
+const onUnload = e => { if (guard) { e.preventDefault(); e.returnValue = ''; } };
+// the address went away from a guarded page: true when the change is held
+function held() {
+  if (!guard || location.hash === guarded) return false;
+  const to = location.hash;
+  history.replaceState(null, '', guarded);
+  if (asking) return true;
+  asking = true;
+  Promise.resolve(guard(to)).then(leave => {
+    asking = false;
+    if (!leave) return;
+    guard = null; guarded = '';
+    history.replaceState(null, '', to);
+    render();
+  }, () => { asking = false; });
+  return true;
+}
+
 let unresolved = null; // a panel name the status did not know when the route was drawn
 function render() {
+  if (held()) return;
   const route = parse(location.hash);
   const shape = SHAPES[route.id];
   unresolved = shape && route.query[shape.param] != null && !shape.known(route.query[shape.param]) ? route.hash : null;
@@ -164,6 +196,7 @@ function render() {
 export function start(el) {
   outlet = el;
   window.addEventListener('hashchange', render);
+  window.addEventListener('beforeunload', onUnload);
   if (!location.hash || location.hash === '#') history.replaceState(null, '', '#/models');
   // a name in the address the first status makes known: draw the route again
   on('status', () => {

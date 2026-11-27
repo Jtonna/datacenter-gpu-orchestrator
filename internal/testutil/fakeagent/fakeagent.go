@@ -58,6 +58,9 @@ type Agent struct {
 	RPCServer string
 	// ReadyAfter is how long a launch stays starting.
 	ReadyAfter time.Duration
+	// ReadyAfterFn, when set, is asked at each launch instead of ReadyAfter
+	// (a test that wants one launch slow and another quick).
+	ReadyAfterFn func() time.Duration
 	// Refuse, when set, may refuse a launch.
 	Refuse func(agentproto.LaunchRequest) *agentproto.LaunchRefusal
 	// IgnoreForce: a forced stop leaves the launch stopping (only /reset ends it).
@@ -557,7 +560,11 @@ func (a *Agent) handler() http.Handler {
 // becomeReady turns the launch ready once its worker port accepts a
 // connection (closed at once, as a probe must) and ReadyAfter has passed.
 func (a *Agent) becomeReady(run *launchRun, addr string) {
-	time.Sleep(a.ReadyAfter)
+	if a.ReadyAfterFn != nil {
+		time.Sleep(a.ReadyAfterFn())
+	} else {
+		time.Sleep(a.ReadyAfter)
+	}
 	for i := 0; i < 200; i++ {
 		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
 			c.Close()

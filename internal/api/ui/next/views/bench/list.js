@@ -14,10 +14,16 @@
 // two and up to five runs (icon, date, dots, duration, the cold note, the pin
 // toggle) and "All N runs ›".
 //
-// Not available yet (drawn, greyed, the reason on hover; p15 plan): New
-// group, New benchmark and Edit (no editor mockup), Run group, the row Run
-// and Cancel (run control is slice 6), "Smallest that fits" (B6), "cold
-// loads" (B7), Compare two (B10), the drop-out note (B11).
+// Run, Run group and Cancel open the run and cancel dialogs (run.js, board
+// bench-run/run-cancel); an entry the setting bench_not_startable keeps from
+// starting shows "Not startable here: <reason>" in place of Run.
+//
+// New group, New benchmark, a benchmark's Edit and the group's Edit open the
+// editors (edit.js, board bench-editors); Duplicate is its dialog there.
+//
+// Not available yet (drawn, greyed, the reason on hover; p15 plan): Run on a
+// recipe (its inputs dialog has no mockup), "Smallest that fits" (B6),
+// "cold loads" (B7), Compare two (B10), the drop-out note (B11).
 
 import { h } from '../../core/dom.js';
 import { href, navigate } from '../../core/router.js';
@@ -27,6 +33,8 @@ import { empty, skeleton, searchField, sidePanel, dialog, toast, bar, runIcon } 
 import { num, dur, plural, DASH } from '../../core/format.js';
 import { bench, groupById, benchmarkById, groupTitle, benchTitle, activeRun, groupSub, chain, entryOf, matrixWords, optionWords,
   when, tookS, resultIcon, dots, coldNote, notYet, WHY, placementWords, modelName } from './common.js';
+import { runButton, cancelButton, notStartable, isRecipe, queuedCount } from './run.js';
+import { duplicateGroup, editLink } from './edit.js';
 
 const GRID = 'M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z';
 const LINES = 'M4 5h12M4 10h12M4 15h8';
@@ -43,7 +51,7 @@ export function runningLine(run) {
     const where = cur.placement ? placementWords(cur.placement) : cur.nodes && cur.nodes.length ? plural(cur.nodes.length, 'zone') : '';
     parts.push([modelName(cur.model_file) || cur.name, where ? ' on ' + where : ''].join(''));
     if (cur.phase && cur.phase.phases_total) parts.push(`${cur.phase.label || cur.phase.type || 'Step'}, step ${num((cur.phase.index || 0) + 1)} of ${num(cur.phase.phases_total || 0)}`);
-  } else if (run.state === 'paused') parts.push('waiting until the zones are idle');
+  } else if (run.state === 'paused') parts.push(run.paused_because ? 'waiting until idle: ' + run.paused_because : 'waiting until the zones are idle');
   return parts.join(' · ');
 }
 export function timeLeft(run) {
@@ -58,44 +66,50 @@ export function runningRow(run, opts = {}) {
   return h('div', { key: 'running', role: 'listitem', 'data-running': run.id || '', class: 'bp-running' + (opts.inline ? ' inline' : '') },
     h('span.bp-ri', runIcon('running', 16, true)),
     h('div.bp-main',
-      opts.inline ? h('span.bp-word', 'Running') : null,
+      opts.inline ? h('span.bp-word', run.state === 'paused' ? 'Waiting until idle' : 'Running') : null,
       h('a.bp-name', { href: run.suite_id ? href('benchmarks', ['all', run.suite_id]) : href('benchmarks', ['runs']) }, run.suite_name || run.suite_id),
       h('div.bp-sub', { title: runningLine(run) }, opts.inline ? ' · ' : null, runningLine(run))),
-    h('div.bp-bar', bar([{ cls: 'a', value: pct }], 100, `${Math.round(pct)} percent of the run is done`, 'sm'), h('span.mut.bp-left', timeLeft(run))),
-    opts.noCancel ? null : notYet(h('span.btn.sm', 'Cancel'), WHY.run),
+    // waiting until idle: nothing is done yet, the bar would say nothing
+    h('div.bp-bar', run.state === 'paused' ? null : bar([{ cls: 'a', value: pct }], 100, `${Math.round(pct)} percent of the run is done`, 'sm'), h('span.mut.bp-left', timeLeft(run))),
+    h('span.bp-runacts', queuedCount() ? h('span.b.b-q', { 'data-queued': String(queuedCount()), title: 'Runs waiting in the queue behind this one' }, `${num(queuedCount())} more queued`) : null,
+      opts.noCancel ? null : cancelButton(run, 'Cancel', 'btn sm dng')),
     opts.after || null);
 }
 
 // ---------- rows ----------
 
-function groupRow(g, run, selected) {
+function groupRow(g, run, selected, saved) {
   const last = g.last_run || null;
   const isRunning = run && run.suite_id === g.id;
-  return h('a.bp-row.bp-grow', { key: 'g-' + g.id, href: href('benchmarks', ['all', g.id]), role: 'listitem', class: selected ? 'sel' : null,
-    'aria-current': selected ? 'true' : null, 'data-group': g.id },
+  return h('a.bp-row.bp-grow', { key: 'g-' + g.id, href: href('benchmarks', ['all', g.id]), role: 'listitem', class: [selected ? 'sel' : '', saved ? 'saved' : ''].join(' ').trim() || null,
+    'aria-current': selected ? 'true' : null, 'data-group': g.id, 'data-saved': saved ? '' : null },
     kindIcon(true),
     h('div.bp-main', h('span.bp-name', groupTitle(g)),
-      h('div.bp-sub', groupSub(g), g.status ? [' · ', h('span.bp-warn', { title: g.reason || '' }, g.status === 'planned' ? 'planned: ' + (g.reason || 'not ready') : 'blocked: ' + (g.reason || 'cannot run'))] : null)),
+      h('div.bp-sub', groupSub(g), g.status ? [h('span.bp-sep', ' · '), h('span.bp-warn', { title: g.reason || '' }, g.status === 'planned' ? 'planned: ' + (g.reason || 'not ready') : 'blocked: ' + (g.reason || 'cannot run'))] : null,
+        g.not_startable ? [h('span.bp-sep', ' · '), notStartable(g.not_startable)] : null)),
     h('div.bp-last', isRunning ? h('span.bp-now', runIcon('running', 14), 'Running now')
       : last ? [resultIcon(last, 14), ' ', when(last.started_at || last.queued_at)] : h('span.mut', 'Never run')),
     h('div.bp-res', isRunning ? dots(run.counts || null, true) : last ? dots(last.counts, false) : null),
     h('div.bp-took.mut', isRunning ? dur(tookS(Object.assign({ state: 'running' }, run))) : last && tookS(last) != null ? dur(tookS(last)) : ''),
-    notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.run));
+    g.not_startable ? null : runButton('group', g.id, 'Run', 'btn sm bp-hover'));
 }
 
-function benchRow(b) {
+function benchRow(b, saved) {
   const u = b.last_use || null;
-  return h('div.bp-row', { key: 'b-' + b.id, role: 'listitem', 'data-bench': b.id },
+  return h('div.bp-row', { key: 'b-' + b.id, role: 'listitem', class: saved ? 'saved' : null, 'data-bench': b.id, 'data-saved': saved ? '' : null },
     kindIcon(false),
-    h('div.bp-main', h('span.bp-name', benchTitle(b)), h('div.bp-sub', chain(b))),
+    h('div.bp-main', h('span.bp-name', benchTitle(b)), h('div.bp-sub', chain(b), b.not_startable ? [h('span.bp-sep', ' · '), notStartable(b.not_startable)] : null)),
     h('div.bp-last', u ? [resultIcon({ result: u.outcome === 'ready' ? 'passed' : u.outcome === 'running' ? 'running' : u.outcome === 'refused' ? 'refused' : u.outcome === 'refused_by_exclusion' ? 'not_judged' : 'failed' }, 14), ' ',
       h('a', { href: href('benchmarks', ['runs', String(u.run_number || u.run_id), String(u.step)]), title: 'Open this use: run ' + (u.run_number || u.run_id) }, when(u.at))]
       : h('span.mut', 'Never run')),
     h('div.bp-res', u ? h('span.bp-dots', h('span', { class: 'bp-dot ' + (u.outcome === 'ready' ? 'ok' : u.outcome === 'running' || u.outcome === 'refused_by_exclusion' ? '' : u.outcome === 'refused' ? 'ref' : 'bad'),
       title: u.outcome === 'ready' ? '1 passed' : u.outcome === 'refused_by_exclusion' ? 'not judged: the profile forces an excluded zone' : u.outcome }, '1')) : null),
     h('div.bp-took.mut', u && u.duration_s != null ? dur(u.duration_s) : ''),
-    notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.run));
+    h('span.bp-hacts', (b.parallel || []).length ? null : h('a.btn.sm.bp-edit', { href: editLink('benchmark', b.id), 'data-act': 'edit', title: 'Edit ' + benchTitle(b) }, 'Edit'),
+      b.not_startable ? null : isRecipe(b) ? notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.recipe) : runButton('benchmark', b.id, 'Run', 'btn sm bp-hover')));
 }
+
+let shownSaved = '';
 
 function match(q, ...texts) {
   if (!q) return true;
@@ -112,18 +126,29 @@ export function listColumn(r, q, setQ, narrow) {
   const gs = groups.filter(g => match(q, g.id, g.name, g.description));
   const bs = benches.filter(b => match(q, b.id, b.name, b.description));
   const open = r.rest[1] || '';
+  // after a save (?saved=<id>, the editors): one line naming what was saved,
+  // its row marked and brought into view once
+  const savedId = (r.query && r.query.saved) || '';
+  const savedB = savedId ? benches.find(b => b.id === savedId) : null;
+  const savedG = savedId && !savedB ? groups.find(g => g.id === savedId) : null;
+  if (savedId && (savedB || savedG) && shownSaved !== savedId) {
+    shownSaved = savedId;
+    setTimeout(() => { const e = document.querySelector(savedB ? `[data-bench="${savedId}"]` : `[data-group="${savedId}"]`); if (e && e.scrollIntoView) e.scrollIntoView({ block: 'nearest' }); }, 0);
+  }
   return h('div', { class: 'bp-list' + (narrow ? ' narrow' : '') },
+    savedB || savedG ? h('p.bp-savedline', { role: 'status', 'data-saved-line': savedId },
+      'Saved ', savedB ? 'benchmark ' : 'group ', h('b', savedB ? benchTitle(savedB) : groupTitle(savedG)), '. Its row is marked below.') : null,
     h('section.bp-card', { 'aria-label': 'Groups and benchmarks' },
       h('div.bp-tools.bp-cardtools',
         searchField(q, setQ, 'Search benchmarks and groups', 'bench-search'),
-        narrow ? null : notYet(h('span.btn', 'New group'), WHY.edit),
-        notYet(h('span.btn.pri', 'New benchmark'), WHY.edit)),
+        narrow ? null : h('a.btn', { href: href('benchmarks', ['group', 'new']), 'data-act': 'new-group' }, 'New group'),
+        h('a.btn.pri', { href: href('benchmarks', ['new']), 'data-act': 'new-benchmark' }, 'New benchmark')),
       run ? [h('h2.bp-sec.now', 'Running now · 1'), h('div.bp-rows', { role: 'list', 'aria-label': 'Running now' }, runningRow(run))] : null,
       h('h2.bp-sec', 'Groups'),
-      gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open)))
+      gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open, !!savedG && g.id === savedId)))
         : h('p.mut.bp-none', groups.length ? 'No group matches the search.' : 'No groups yet. A group runs several benchmarks, or one benchmark over several models and placements, in one go.'),
       h('h2.bp-sec', 'Benchmarks'),
-      bs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Benchmarks' }, bs.map(benchRow))
+      bs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Benchmarks' }, bs.map(b => benchRow(b, !!savedB && b.id === savedId)))
         : h('p.mut.bp-none', benches.length ? 'No benchmark matches the search.' : 'No benchmarks yet.')));
 }
 
@@ -217,27 +242,12 @@ export function groupPanel(id, onClose) {
         : h('p.mut', 'This group has not run yet.'),
       ps.runs && ps.runs.length ? h('a.bp-all', { href: href('benchmarks', ['runs'], { suite: id }) }, `All ${total != null ? num(total) + ' ' : ''}runs ›`) : null);
   };
-  const duplicate = async () => {
-    const g = groupById(id);
-    if (!g) return;
-    let idInput, nameInput;
-    const v = await dialog({ title: 'Duplicate this group',
-      body: h('div.col', { style: 'gap:12px' }, h('p', 'A copy with the same entries and options, under a new id. Nothing runs.'),
-        h('div.field', h('label', 'New id'), idInput = h('input.input', { type: 'text', name: 'id', value: g.id + '-copy', 'aria-label': 'New id' })),
-        h('div.field', h('label', 'Name'), nameInput = h('input.input', { type: 'text', name: 'name', value: (g.name || g.id) + ' (copy)', 'aria-label': 'Name' }))),
-      comment: { label: 'Why', required: true }, actions: [{ label: 'Cancel', value: undefined }, { label: 'Duplicate', kind: 'pri', value: () => ({ id: idInput.value.trim(), name: nameInput.value.trim() }) }] });
-    if (!v || !v.value || !v.value.id) return;
-    const copy = { id: v.value.id, name: v.value.name || v.value.id };
-    for (const k of ['description', 'benchmarks', 'stop_on_failure', 'cooldown_s', 'only_when_idle', 'idle_wait_s', 'evict_others', 'baseline']) if (g[k] !== undefined) copy[k] = g[k];
-    try {
-      await api.post('/api/bench/groups', copy, { comment: v.comment });
-      toast('Duplicated as ' + copy.id, 'ok');
-      navigate('benchmarks', ['all', copy.id]);
-    } catch (e) { toast(e.message, 'err'); }
-  };
+  // Duplicate: the board's dialog (edit.js), a copy under a new id with a comment
+  const duplicate = () => duplicateGroup(groupById(id));
   const p = sidePanel({ closesMenu: true, label: 'Group', kind: 'bench-group', name: 'Group ' + id,
     title: () => groupTitle(groupById(id)) || id,
-    controls: () => h('div.bp-acts', notYet(h('span.btn.pri.sm', 'Run group'), WHY.run), notYet(h('span.btn.sm', 'Edit'), WHY.edit),
+    controls: () => h('div.bp-acts', groupById(id) && groupById(id).not_startable ? notStartable(groupById(id).not_startable) : runButton('group', id, 'Run group', 'btn pri sm'),
+      groupById(id) ? h('a.btn.sm', { href: editLink('group', id), 'data-act': 'edit' }, 'Edit') : null,
       h('button.btn.sm', { type: 'button', 'data-act': 'duplicate', onclick: duplicate, disabled: groupById(id) ? null : '' }, 'Duplicate')),
     body, onClose });
   p.key = id;

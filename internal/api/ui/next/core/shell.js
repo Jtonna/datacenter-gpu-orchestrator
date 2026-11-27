@@ -75,8 +75,9 @@ export const NAV = [
     // the boards' menu (Bench-Overview): Overview, Benchmarks N, Runs N,
     // Settings (the Settings page's Benchmarks group). The counts are the
     // benchmark pages' own copy (state.benchCounts), shown once read.
-    { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'all'].includes(r.rest[0]) },
-    { id: 'benchmarks', rest: ['all'], label: 'Benchmarks', match: r => r.rest[0] === 'all', count: () => state.benchCounts && state.benchCounts.benchmarks, countWord: 'group or benchmark', countWords: 'groups and benchmarks' },
+    { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'all', 'new', 'benchmark', 'group'].includes(r.rest[0]) },
+    // the editors (#/benchmarks/new..., /benchmark/<id>/edit, /group/...) are pages of the list
+    { id: 'benchmarks', rest: ['all'], label: 'Benchmarks', match: r => ['all', 'new', 'benchmark', 'group'].includes(r.rest[0]), count: () => state.benchCounts && state.benchCounts.benchmarks, countWord: 'group or benchmark', countWords: 'groups and benchmarks' },
     { id: 'benchmarks', rest: ['runs'], label: 'Runs', match: r => r.rest[0] === 'runs', count: () => state.benchCounts && state.benchCounts.runs, countWord: 'run' },
     { id: 'settings', rest: ['bench'], label: 'Settings', link: true },
   ] },

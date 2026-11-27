@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
@@ -95,6 +98,75 @@ type ManagerOptions struct {
 type runPlan struct {
 	Suite      *benchspec.Suite                `json:"suite"`
 	Benchmarks map[string]*benchspec.Benchmark `json:"benchmarks"`
+	// Start is who started the run, why, and which models of other people
+	// it may unload. Stored with the plan (the runs table has no column for
+	// it, so an older image reads the plan as before and ignores it).
+	Start *StartInfo `json:"start,omitempty"`
+}
+
+// StartInfo is who started a run and why, and the models of other people it
+// may unload (evict_others): EvictLimited set, only those in EvictOnly; a
+// model of someone else that is not named is waited for, never unloaded.
+type StartInfo struct {
+	By           string   `json:"by,omitempty"`
+	Comment      string   `json:"comment,omitempty"`
+	EvictLimited bool     `json:"evict_limited,omitempty"`
+	EvictOnly    []string `json:"evict_only,omitempty"`
+}
+
+func (s *StartInfo) mayEvict(profile string) bool {
+	if s == nil || !s.EvictLimited {
+		return true
+	}
+	return slices.Contains(s.EvictOnly, profile)
+}
+
+// MissingProfile is a benchmark whose profile does not exist (any more).
+type MissingProfile struct{ Benchmark, ID, Profile string }
+
+func (e *MissingProfile) Error() string {
+	return fmt.Sprintf("benchmark %q: profile %q does not exist (any more)", e.ID, e.Profile)
+}
+
+// GateRun is a run about to be queued, expanded: every plain benchmark it
+// would run, in order (parallel steps by their members).
+type GateRun struct {
+	Kind    string // suite or benchmark
+	ID      string // the suite (group) or benchmark id
+	Trigger string
+	Suite   *benchspec.Suite
+	Leaves  []*benchspec.Benchmark
+}
+
+// StartRefusal is the start gate's answer: the run is not queued, nothing
+// starts. Code is a short word (not_startable, excluded_zone,
+// scheduler_gpu, model_deleted, ...); Entry and Machine name what refused.
+type StartRefusal struct {
+	Code    string `json:"code"`
+	Msg     string `json:"message"`
+	Entry   string `json:"entry,omitempty"`
+	Machine string `json:"machine,omitempty"`
+}
+
+func (e *StartRefusal) Error() string { return e.Msg }
+
+// SetProfileNamer gives the name people see for a profile id (the shown
+// name), put in the progress document's current entry as profile_name.
+func (m *Manager) SetProfileNamer(f func(string) string) { m.namer.Store(&f) }
+
+func (m *Manager) profileName(id string) string {
+	if f := m.namer.Load(); f != nil && *f != nil && id != "" {
+		return (*f)(id)
+	}
+	return ""
+}
+
+// SetStartGate sets the check every run passes before it is queued (from
+// the page, the API, MCP or a schedule); nil removes it.
+func (m *Manager) SetStartGate(g func(*GateRun) error) {
+	m.mu.Lock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
+	m.gate = g
 }
 
 type queued struct {
@@ -114,6 +186,8 @@ type Manager struct {
 	log *slog.Logger
 
 	mu       sync.Mutex
+	gate     func(*GateRun) error                // SetStartGate
+	namer    atomic.Pointer[func(string) string] // SetProfileNamer
 	queue    []*queued
 	cur      *activeRun
 	stopping bool
@@ -423,6 +497,12 @@ type EnqueueOptions struct {
 	// EvictOthers sets evict_others for this run only (nil: the suite's
 	// setting). The run's stored suite snapshot carries the value used.
 	EvictOthers *bool
+	// OnlyWhenIdle and IdleWaitS set only_when_idle and idle_wait_s for
+	// this run only (nil: the suite's settings).
+	OnlyWhenIdle *bool
+	IdleWaitS    *int
+	// Start is who starts the run and why, and what it may unload.
+	Start StartInfo
 }
 
 func newRunID(now time.Time) string {
@@ -500,36 +580,121 @@ func (m *Manager) resolve(s *benchspec.Suite) (*runPlan, error) {
 			}
 		}
 		if !b.IsParallel() && b.Applied == nil && m.o.ProfileOK != nil && !m.o.ProfileOK(b.Profile) {
-			errs = append(errs, fmt.Errorf("benchmark %q: profile %q does not exist (any more)", b.ID, b.Profile))
+			errs = append(errs, &MissingProfile{Benchmark: b.Title(), ID: b.ID, Profile: b.Profile})
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	return plan, nil
 }
 
 // Enqueue queues a run of a suite and returns it.
 func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
-	ss, err := m.o.Store.GetSuite(suiteID)
+	spec, r, baseline, err := m.suiteRun(suiteID, o)
 	if err != nil {
 		return nil, err
 	}
+	return m.queueRun(spec, r, baseline, o.Note, o.Trigger, o.Start)
+}
+
+// suiteRun is the suite snapshot and the run a run of suiteID with o would have.
+func (m *Manager) suiteRun(suiteID string, o EnqueueOptions) (*benchspec.Suite, *Run, string, error) {
+	ss, err := m.o.Store.GetSuite(suiteID)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	if !ss.Spec.Runnable() {
-		return nil, fmt.Errorf("%w: suite %q is %s and cannot be run: %s", ErrNotRunnable, suiteID, ss.Spec.Status, ss.Spec.Reason)
+		return nil, nil, "", fmt.Errorf("%w: suite %q is %s and cannot be run: %s", ErrNotRunnable, suiteID, ss.Spec.Status, ss.Spec.Reason)
+	}
+	if o.IdleWaitS != nil && (*o.IdleWaitS < 0 || *o.IdleWaitS > 86400) {
+		return nil, nil, "", fmt.Errorf("%w: idle_wait_s must be 0 to 86400", ErrInvalid)
 	}
 	spec := ss.Spec
-	if o.EvictOthers != nil {
+	if o.EvictOthers != nil || o.OnlyWhenIdle != nil || o.IdleWaitS != nil {
 		c := *spec
-		v := *o.EvictOthers
-		c.EvictOthers = &v
+		if o.EvictOthers != nil {
+			v := *o.EvictOthers
+			c.EvictOthers = &v
+		}
+		if o.OnlyWhenIdle != nil {
+			v := *o.OnlyWhenIdle
+			c.OnlyWhenIdle = &v
+		}
+		if o.IdleWaitS != nil {
+			v := *o.IdleWaitS
+			c.IdleWaitS = &v
+		}
 		spec = &c
 	}
 	baseline := o.Baseline
 	if baseline == "" {
 		baseline = ss.Spec.Baseline
 	}
-	return m.queueRun(spec, &Run{Kind: RunKindSuite, SuiteID: suiteID, SuiteName: ss.Spec.Title()}, baseline, o.Note, o.Trigger)
+	return spec, &Run{Kind: RunKindSuite, SuiteID: suiteID, SuiteName: ss.Spec.Title()}, baseline, nil
+}
+
+// PreviewSuite expands a run of a suite as Enqueue would, without the gate
+// and without queueing anything (the dry read of the run dialog).
+func (m *Manager) PreviewSuite(suiteID string, o EnqueueOptions) (*GateRun, error) {
+	spec, r, _, err := m.suiteRun(suiteID, o)
+	if err != nil {
+		return nil, err
+	}
+	return m.preview(spec, r, o.Trigger)
+}
+
+// PreviewBenchmark is PreviewSuite for a direct run of one benchmark.
+func (m *Manager) PreviewBenchmark(id string, o BenchRunOptions) (*GateRun, error) {
+	spec, r, err := m.benchmarkRun(id, o)
+	if err != nil {
+		return nil, err
+	}
+	return m.preview(spec, r, "")
+}
+
+func (m *Manager) preview(spec *benchspec.Suite, r *Run, trig string) (*GateRun, error) {
+	plan, err := m.resolve(spec)
+	if err != nil {
+		return nil, err
+	}
+	return gateRunOf(plan, r, trig), nil
+}
+
+// gateRunOf is the expanded run the start gate judges.
+func gateRunOf(plan *runPlan, r *Run, trig string) *GateRun {
+	if trig == "" {
+		trig = "manual"
+	}
+	g := &GateRun{Kind: r.Kind, ID: r.SuiteID, Trigger: trig, Suite: plan.Suite}
+	if r.Kind == RunKindBenchmark {
+		g.ID = r.BenchmarkID
+	}
+	for _, it := range plan.Suite.Benchmarks {
+		g.Leaves = append(g.Leaves, leafBenchmarks(plan, it)...)
+	}
+	return g
+}
+
+// QueueState is how many runs wait in the queue and the run executing now
+// ("" when none).
+func (m *Manager) QueueState() (queued int, running string) {
+	m.mu.Lock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
+	if m.cur != nil {
+		running = m.cur.run.ID
+	}
+	return len(m.queue), running
+}
+
+// PlanBenchmarks are the benchmarks a run ran, as stored with it (what "Run
+// again" compares with the definitions now); nil when the run has none.
+func PlanBenchmarks(r *Run) map[string]*benchspec.Benchmark {
+	var p runPlan
+	if r == nil || len(r.Suite) == 0 || json.Unmarshal(r.Suite, &p) != nil {
+		return nil
+	}
+	return p.Benchmarks
 }
 
 // BenchRunOptions are the optional fields of a direct run of one benchmark.
@@ -544,27 +709,38 @@ type BenchRunOptions struct {
 	// Inputs fill in or override a recipe's default inputs (refused for a
 	// benchmark with a fixed profile).
 	Inputs *benchspec.Inputs
+	// Start is who starts the run and why, and what it may unload.
+	Start StartInfo
 }
 
 // EnqueueBenchmark queues a run of one benchmark on its own (data model step
 // 1): a run of kind "benchmark" with one step and no suite. Its default
 // baseline is the benchmark's previous completed direct run.
 func (m *Manager) EnqueueBenchmark(id string, o BenchRunOptions) (*Run, error) {
-	sb, err := m.o.Store.GetBenchmark(id)
+	spec, r, err := m.benchmarkRun(id, o)
 	if err != nil {
 		return nil, err
 	}
+	return m.queueRun(spec, r, o.Baseline, o.Note, "", o.Start)
+}
+
+// benchmarkRun is the one-item suite and the run a direct run of id has.
+func (m *Manager) benchmarkRun(id string, o BenchRunOptions) (*benchspec.Suite, *Run, error) {
+	sb, err := m.o.Store.GetBenchmark(id)
+	if err != nil {
+		return nil, nil, err
+	}
 	if o.IdleWaitS != nil && (*o.IdleWaitS < 0 || *o.IdleWaitS > 86400) {
-		return nil, fmt.Errorf("%w: idle_wait_s must be 0 to 86400", ErrInvalid)
+		return nil, nil, fmt.Errorf("%w: idle_wait_s must be 0 to 86400", ErrInvalid)
 	}
 	zero := 0
 	spec := &benchspec.Suite{Name: sb.Spec.Title(), Benchmarks: []benchspec.SuiteItem{{Ref: id, Inputs: o.Inputs}}, CooldownS: &zero,
 		OnlyWhenIdle: o.OnlyWhenIdle, IdleWaitS: o.IdleWaitS, EvictOthers: o.EvictOthers}
-	return m.queueRun(spec, &Run{Kind: RunKindBenchmark, BenchmarkID: id, SuiteName: sb.Spec.Title()}, o.Baseline, o.Note, "")
+	return spec, &Run{Kind: RunKindBenchmark, BenchmarkID: id, SuiteName: sb.Spec.Title()}, nil
 }
 
 // queueRun resolves spec, checks the note and the baseline, and queues r.
-func (m *Manager) queueRun(spec *benchspec.Suite, r *Run, baseline, note, trig string) (*Run, error) {
+func (m *Manager) queueRun(spec *benchspec.Suite, r *Run, baseline, note, trig string, start StartInfo) (*Run, error) {
 	if len(note) > 500 {
 		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
 	}
@@ -572,15 +748,31 @@ func (m *Manager) queueRun(spec *benchspec.Suite, r *Run, baseline, note, trig s
 	if err != nil {
 		return nil, err
 	}
+	if start.By != "" || start.Comment != "" || start.EvictLimited {
+		plan.Start = &start
+		r.StartedBy, r.StartComment = start.By, start.Comment
+	}
+	if trig == "" {
+		trig = "manual"
+	}
+	// the gate decides on the whole expanded run before anything is queued
+	var gate func(*GateRun) error
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		gate = m.gate
+	}()
+	if gate != nil {
+		if err := gate(gateRunOf(plan, r, trig)); err != nil {
+			return nil, err
+		}
+	}
 	if baseline != "" {
 		if _, err := m.o.Store.GetRun(baseline); err != nil {
 			return nil, fmt.Errorf("%w: baseline run %q: %v", ErrInvalid, baseline, err)
 		}
 	}
 	snap, _ := json.Marshal(plan)
-	if trig == "" {
-		trig = "manual"
-	}
 	now := m.o.Now()
 	r.ID, r.State, r.Note, r.Trigger, r.BaselineRunID, r.QueuedAt, r.Version, r.Suite = newRunID(now), RunQueued, note, trig, baseline, now.UnixMilli(), m.o.Version, snap
 	copyOut, err := m.enqueue(r, plan)
@@ -629,14 +821,38 @@ func (m *Manager) unqueue(id string) (removed *Run, cur *activeRun) {
 
 // Cancel cancels a queued run at once, or asks the running run to stop after
 // its current request (it then unloads what it loaded).
-func (m *Manager) Cancel(id string) error {
+func (m *Manager) Cancel(id string) error { return m.CancelBy(id, "", "") }
+
+// CancelBy is Cancel with who asked and why; the run's outcome says both:
+// `cancelled at step 7 of 30 by ann: "wrong zones"`, or `cancelled before it
+// started by ann: "wrong zones"` for a queued run.
+func (m *Manager) CancelBy(id, by, why string) error {
 	removed, cur := m.unqueue(id)
+	who := ""
+	if by != "" || why != "" {
+		who = " by " + orWord(strings.TrimSpace(by), "someone")
+		if why != "" {
+			who += `: "` + why + `"`
+		}
+	}
 	if removed != nil {
-		m.finishUnstarted(removed, RunCancelled, "cancelled before it started")
+		removed.cancelBy, removed.cancelWhy = by, why
+		m.finishUnstarted(removed, RunCancelled, "cancelled before it started"+who)
 		return nil
 	}
 	if cur != nil && cur.run.ID == id {
-		cur.cancel("cancelled by request")
+		if who == "" {
+			cur.cancel("cancelled by request")
+			return nil
+		}
+		var at string
+		func() {
+			cur.mu.Lock()
+			defer supervise.Unlocked("bench", cur.mu.Unlock)
+			at = fmt.Sprintf("cancelled at step %d of %d", min(cur.done+1, max(cur.total, 1)), max(cur.total, 1))
+			cur.cancelBy, cur.cancelWhy = by, why
+		}()
+		cur.cancel(at + who)
 		return nil
 	}
 	r, err := m.o.Store.GetRun(id)
@@ -653,8 +869,11 @@ func (m *Manager) finishUnstarted(r *Run, state, why string) {
 	}
 	r.State, r.FinishedAt, r.Error = state, now, why
 	m.publishRun(r)
-	m.record(history.TBenchRunFinished, history.Info, "", fmt.Sprintf("Benchmark run %s was %s before it started: %s.", r.ID, state, why),
-		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": why})
+	data := map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": why}
+	if r.cancelBy != "" || r.cancelWhy != "" {
+		data["cancelled_by"], data["cancel_comment"] = r.cancelBy, r.cancelWhy
+	}
+	m.record(history.TBenchRunFinished, history.Info, "", fmt.Sprintf("Benchmark run %s was %s before it started: %s.", r.ID, state, why), data)
 }
 
 // SetModelFile tells the manager how to name the model file of a profile before

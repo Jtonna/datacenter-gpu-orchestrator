@@ -19,6 +19,7 @@ func TestHostMemory_StatusHasEveryMachineThatHoldsIt(t *testing.T) {
 	h.viewChanged()
 	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: qwen4BCell}
 	h.cfg.Defaults.CacheRAMMiB, h.cfg.Defaults.NodeHostCacheRAMMiB, h.cfg.Defaults.CtxCheckpoints = 2048, 256, 32
+	h.cfg.Defaults.CountHostMemory = true // counting every profile (off counts only profiles with their own flags)
 	h.llama("s", 4000, func(p *core.Profile) { p.ForceNodes, p.TTL = []string{"c"}, ptrDur(0) })
 
 	st := h.c.statusDoc()
@@ -33,7 +34,7 @@ func TestHostMemory_StatusHasEveryMachineThatHoldsIt(t *testing.T) {
 	if sv.Scope != "on the scheduler's machine only" || !reflect.DeepEqual(sv.Instances, []string{"s"}) || sv.CheckpointsMiB != 1608 || sv.PromptCacheMiB != 2048 || sv.Note != "up to 3656 MiB" {
 		t.Fatalf("server: %+v", sv)
 	}
-	want := []NodeHostMemory{{Node: "a", Name: "a", CheckpointsMiB: 1608, PromptCacheMiB: 256, Instances: []string{"m"}, Note: "up to 1864 MiB"}}
+	want := []NodeHostMemory{{Node: "a", Name: "a", CheckpointsMiB: 1608, PromptCacheMiB: 256, Instances: []string{"m"}, Counted: true, Note: "up to 1864 MiB"}}
 	if !reflect.DeepEqual(st.NodeHostMemory, want) {
 		t.Fatalf("nodes:\n got %+v\nwant %+v", st.NodeHostMemory, want)
 	}

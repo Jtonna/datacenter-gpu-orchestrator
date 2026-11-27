@@ -74,6 +74,17 @@ type Options struct {
 	// ReadSlotCtx reads a ready llama server's context per slot (/props)
 	// after every load (realctx.go); default instance.ReadSlotCtx.
 	ReadSlotCtx func(ctx context.Context, addr, key string) (int, error)
+	// LocalMemory reads the scheduler machine's available memory in MiB
+	// (MemAvailable), sampled every localMemEvery by Run; a change of
+	// localMemStep MiB or more, or an error, is posted to the core
+	// (hostbudget.go). nil: never read, and the host memory of loads hosted
+	// on the scheduler's machine is not checked.
+	LocalMemory func() (LocalMem, error)
+	// ProcMemory reads a host process's anonymous resident memory in MiB
+	// (RssAnon), for the models hosted on the scheduler's machine, read with
+	// LocalMemory. nil: their growth is not read, and each counts at its
+	// full maximum ("conservative").
+	ProcMemory func(pid int) (int, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -128,6 +139,9 @@ type snapshot struct {
 	upKeys   map[string]string // the key of an upstream that wants one (a host on a node)
 	upPlace  map[string]UpstreamPlacement
 	scoped   map[string]*core.Profile // scoped.go: the run-scoped profiles held now (never modified)
+	// hostPIDs: iid -> pid of the ready host processes on this machine
+	// (hostbudget.go startLocalMemory reads their memory)
+	hostPIDs map[uint64]int
 }
 
 // UpstreamPlacement is where a ready instance runs, for a passthrough
@@ -205,8 +219,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.needs.start()
 		defer s.needs.close() // what is queued is written before Run returns
 	}
-	s.startBuildReads() // builds.go
-	s.warmHeaders()     // derive.go
+	s.startBuildReads()  // builds.go
+	s.startLocalMemory() // hostbudget.go
+	s.warmHeaders()      // derive.go
 	var stopTimer func() bool
 	var timerAt time.Time
 	ctxDone := ctx.Done()
@@ -284,7 +299,15 @@ func (s *Scheduler) step(ev event) {
 			place[name] = UpstreamPlacement{Instance: in.iid, Session: in.sessionID, Nodes: s.core.leaseNodesOf(in)} // built once per instance
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place, scoped: maps.Clone(s.core.scoped)})
+	pids := map[uint64]int{}
+	for _, in := range s.core.insts {
+		if (in.state == stReady || in.state == stDraining) && in.child != nil && serverHosted(in.prof, in.placement) {
+			if pid := in.child.PID(); pid > 0 {
+				pids[in.iid] = pid
+			}
+		}
+	}
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place, scoped: maps.Clone(s.core.scoped), hostPIDs: pids})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
@@ -788,6 +811,16 @@ func (s *Scheduler) UnloadFor(ctx context.Context, model string, force bool, why
 // requests answered.
 func (s *Scheduler) CancelQueued(ctx context.Context, profiles []string) (int, error) {
 	return ask(s, ctx, func(c *schedCore) int { return c.cancelQueued(profiles) })
+}
+
+// DropBenchLoads withdraws the loads benchmark run run sent for model that
+// still wait in the queue (dropBenchLoads); the number withdrawn.
+func (s *Scheduler) DropBenchLoads(ctx context.Context, model, run string) (int, error) {
+	p, _, ok := s.resolve(model)
+	if !ok {
+		return 0, errUnknown(model)
+	}
+	return ask(s, ctx, func(c *schedCore) int { return c.dropBenchLoads(p.Name, run) })
 }
 
 // Drain is POST /api/models/drain/{model}: the instance admits nothing

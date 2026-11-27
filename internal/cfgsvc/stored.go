@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/llamaflags"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
@@ -19,8 +20,9 @@ import (
 //   - the model path rule (internal/modelpath): KeepModels for the profiles
 //     of the configuration being changed; KeepPaths for one stored elsewhere
 //     (its file must be there);
-//   - a flag the scheduler began to manage later in extra_args
-//     (lateManaged, --ctx-checkpoints): KeepArgs, unchanged args;
+//   - --ctx-checkpoints / --cache-ram in extra_args in a form a write now
+//     refuses (llamaflags.Parse: the "=" form, a flag given twice, a bad
+//     value): KeepArgs, unchanged args; the launch uses the cluster value;
 //   - a ctx above the model's trained context: KeepCtx, unchanged model
 //     and ctx.
 //
@@ -107,8 +109,8 @@ func (s *Service) storedNotes(ps map[string]*config.ProfileSpec, before *config.
 		if p.Model != "" && modelpath.Check(p.Model) != nil {
 			paths = append(paths, fmt.Sprintf("profile %q names the model path %q, which a new profile may not (%v): it is kept and its load is refused", id, p.Model, modelpath.Check(p.Model)))
 		}
-		if l := config.LateManagedIn(p.ExtraArgs); len(l) > 0 {
-			late = append(late, fmt.Sprintf("profile %q: extra_args %s is not passed (the scheduler passes it from the setting ctx_checkpoints); a new profile may not set it", id, strings.Join(l, ", ")))
+		if _, problems := llamaflags.Parse(p.ExtraArgs); len(problems) > 0 {
+			late = append(late, fmt.Sprintf("profile %q: extra_args %s; the launch uses the cluster value for it; a new profile may not set it this way", id, strings.Join(problems, "; ")))
 		}
 		if p.Ctx != nil && (p.CtxAboveTrained == nil || !*p.CtxAboveTrained) && s.o.Parse.TrainedCtx != nil {
 			if tr, ok := s.o.Parse.TrainedCtx(filepath.Join(modelsDir, p.Model)); ok && tr > 0 && *p.Ctx > tr {

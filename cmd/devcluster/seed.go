@@ -228,15 +228,17 @@ func seedBenchDefs(c *cluster) error {
 		if kind == "suite" {
 			path, tool, arg = "/api/bench/suites", "create_suite", "suite"
 		}
+		// every save of a benchmark or a group needs a comment
+		const why = "seeded for the dev cluster"
 		switch by {
 		case "mcp":
-			_, err := agent.call(tool, map[string]any{arg: spec, "actor": "bench setup"})
+			_, err := agent.call(tool, map[string]any{arg: spec, "actor": "bench setup", "comment": why})
 			return err
 		case "rest":
-			_, err := s.do("POST", path, asCurl, spec)
+			_, err := s.do("POST", path, asCurl.say(why), spec)
 			return err
 		default:
-			_, err := s.do("POST", path, asAlex, spec)
+			_, err := s.do("POST", path, asAlex.say(why), spec)
 			return err
 		}
 	}
@@ -284,7 +286,11 @@ func seedBenchFinish(c *cluster) error {
 		for k, v := range e.changes {
 			body[k] = v
 		}
-		if _, err := s.do("PUT", "/api/bench/suites/"+e.id, e.w, body); err != nil {
+		w := e.w
+		if w.comment == "" {
+			w = w.say("run options after the seed runs")
+		}
+		if _, err := s.do("PUT", "/api/bench/suites/"+e.id, w, body); err != nil {
 			return err
 		}
 	}

@@ -198,8 +198,8 @@ func New(ctx context.Context, o Options) *Service {
 		}
 		s.log.Warn("stored configuration has problems that only the file check finds", "err", err)
 	}
-	for _, w := range cfg.LateManagedArgs() {
-		s.log.Warn("stored profile sets a flag the scheduler now manages; the launch drops it", "revision", r.Revision, "detail", w)
+	for _, w := range cfg.HostMemoryArgProblems() {
+		s.log.Warn("stored profile's host memory flag is not in a form the check accepts; the launch uses the cluster value for it", "revision", r.Revision, "detail", w)
 	}
 	cfg.Revision = r.Revision
 	s.setConfig(cfg)

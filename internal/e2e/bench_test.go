@@ -74,7 +74,7 @@ func TestBenchSuiteEndToEnd(t *testing.T) {
 		t.Fatalf("hello %v", hello)
 	}
 
-	run := mustStatus(t, c, "POST", "/api/bench/suites/smoke/run", `{"note":"e2e"}`, 202)
+	run := mustStatus(t, c, "POST", "/api/bench/suites/smoke/run", `{"note":"e2e","comment":"e2e"}`, 202)
 	id := run["id"].(string)
 	var detail map[string]any
 	c.waitFor("the run to finish", 60*time.Second, func() bool {
@@ -212,7 +212,7 @@ func TestBenchPhasesEndToEnd(t *testing.T) {
 		}
 	}()
 
-	run := mustStatus(t, c, "POST", "/api/bench/suites/phases/run", `{"note":"phases e2e"}`, 202)
+	run := mustStatus(t, c, "POST", "/api/bench/suites/phases/run", `{"note":"phases e2e","comment":"e2e"}`, 202)
 	id := run["id"].(string)
 	var detail map[string]any
 	c.waitFor("the run to finish", 60*time.Second, func() bool {
@@ -337,7 +337,7 @@ func TestBenchLoadPhaseRefusedAfterAccept(t *testing.T) {
 	mustStatus(t, c, "POST", "/api/bench/benchmarks", `{"id":"forced-load","name":"Forced load","profile":"forced-big","timeout_s":30,
 	  "phases":[{"type":"load"}],"expect":{"outcome":"refused"}}`, 201)
 	mustStatus(t, c, "POST", "/api/bench/suites", `{"id":"refuse","name":"Refuse","benchmarks":["forced-load"],"cooldown_s":0}`, 201)
-	run := mustStatus(t, c, "POST", "/api/bench/suites/refuse/run", `{}`, 202)
+	run := mustStatus(t, c, "POST", "/api/bench/suites/refuse/run", `{"comment":"e2e"}`, 202)
 	id := run["id"].(string)
 	var detail map[string]any
 	c.waitFor("the run to finish", 60*time.Second, func() bool {

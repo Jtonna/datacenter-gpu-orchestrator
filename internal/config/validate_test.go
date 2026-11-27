@@ -164,7 +164,7 @@ func TestValidateExtraArgsManagedFlags(t *testing.T) {
 	flags := []string{
 		"--rpc", "--device", "-dev", "--tensor-split", "-ts", "--split-mode", "-sm", "--host", "--port",
 		"--model", "-m", "--ctx-size", "-c", "--n-gpu-layers", "--gpu-layers", "-ngl", "--parallel", "-np",
-		"--cache-type-k", "-ctk", "--cache-type-v", "-ctv", "--fit", "-fit", "--cache-ram", "-cram",
+		"--cache-type-k", "-ctk", "--cache-type-v", "-ctv", "--fit", "-fit",
 		"--flash-attn", "-fa", "--main-gpu", "-mg",
 		// log verbosity: the scheduler always passes -lv 4 (design 7.4)
 		"-lv", "--verbosity", "--log-verbosity", "-v", "--verbose", "--log-verbose", "--log-disable",

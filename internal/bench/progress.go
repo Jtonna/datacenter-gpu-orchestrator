@@ -387,6 +387,9 @@ func (m *Manager) progressDoc(ar *activeRun) map[string]any {
 		}
 		current = map[string]any{"index": ar.cur, "benchmark_id": it.id, "name": it.name, "description": it.desc, "profile": it.profile,
 			"model_file": strings.Join(model, ", "), "nodes": nonNilStrings(nodes), "percent": round1(pct), "placement": it.placement()}
+		if n := m.profileName(it.profile); n != "" {
+			current["profile_name"] = n
+		}
 		if lead != nil {
 			current["phase"] = lead.phaseDoc()
 			d := map[string]any{}

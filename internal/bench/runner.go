@@ -15,19 +15,21 @@ import (
 
 // activeRun is the run being executed.
 type activeRun struct {
-	mu         sync.Mutex
-	run        *Run
-	plan       *runPlan
-	cancelCh   chan struct{}
-	cancelOnce sync.Once
-	reason     string
-	timedOut   bool
-	loaded     map[string]bool // profiles this run loaded and has not unloaded yet
-	total      int
-	done       int
-	counts     RunCounts      // outcomes so far (the progress document)
-	step       map[string]any // the step in flight (the first one, for a parallel step)
-	paused     string         // why the run is paused, when it is
+	mu       sync.Mutex
+	run      *Run
+	plan     *runPlan
+	cancelCh chan struct{}
+	// cancelBy and cancelWhy: who cancelled the run and why (under mu)
+	cancelBy, cancelWhy string
+	cancelOnce          sync.Once
+	reason              string
+	timedOut            bool
+	loaded              map[string]bool // profiles this run loaded and has not unloaded yet
+	total               int
+	done                int
+	counts              RunCounts      // outcomes so far (the progress document)
+	step                map[string]any // the step in flight (the first one, for a parallel step)
+	paused              string         // why the run is paused, when it is
 
 	// progress model (progress.go)
 	items    []*itemPlan
@@ -222,6 +224,9 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 		}
 	})
 	startData := map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "steps": ar.total, "trigger": r.Trigger, "baseline": ar.snapshot().BaselineRunID}
+	if st := q.plan.Start; st != nil && (st.By != "" || st.Comment != "") {
+		startData["started_by"], startData["start_comment"] = st.By, st.Comment
+	}
 	what := "suite"
 	if r.BenchmarkID != "" {
 		what, startData["benchmark"], startData["kind"] = "benchmark", r.BenchmarkID, RunKindBenchmark
@@ -368,6 +373,13 @@ run:
 	if r.BenchmarkID != "" {
 		data["benchmark"], data["kind"] = r.BenchmarkID, RunKindBenchmark
 	}
+	func() {
+		ar.mu.Lock()
+		defer supervise.Unlocked("bench", ar.mu.Unlock)
+		if state == RunCancelled && (ar.cancelBy != "" || ar.cancelWhy != "") {
+			data["cancelled_by"], data["cancel_comment"] = ar.cancelBy, ar.cancelWhy
+		}
+	}()
 	m.record(history.TBenchRunFinished, sev, "", summary, data)
 }
 
@@ -405,10 +417,12 @@ const (
 // busy says why the scheduler is in use by something other than this run, or "".
 // With evictOthers a model of someone else that is loaded and idle does not
 // count: the run's load may make the scheduler unload it.
-func busyReason(st *StatusInfo, ours map[string]bool, evictOthers bool) string {
+func busyReason(st *StatusInfo, ours map[string]bool, evictOthers bool, may func(string) bool) string {
 	var why []string
 	for _, in := range st.Instances {
 		switch {
+		case !ours[in.Profile] && evictOthers && in.State == "ready" && in.InFlight == 0 && in.Waiters == 0 && may != nil && !may(in.Profile):
+			why = append(why, fmt.Sprintf("%s is ready and was not named among the models this run may unload", in.Profile))
 		case !ours[in.Profile] && evictOthers && in.State == "ready" && in.InFlight == 0 && in.Waiters == 0:
 		case !ours[in.Profile] && evictOthers && in.State == "ready":
 			why = append(why, fmt.Sprintf("%s has %d requests in flight or waiting (not this run's)", in.Profile, in.InFlight+in.Waiters))
@@ -448,7 +462,7 @@ func (x *suiteExec) waitIdle(max time.Duration) idleResult {
 		if err != nil {
 			why = "the scheduler's status could not be read: " + err.Error()
 		} else {
-			why = busyReason(st, x.a.loadedSet(), x.a.plan.Suite.EvictsOthers())
+			why = busyReason(st, x.a.loadedSet(), x.a.plan.Suite.EvictsOthers(), x.a.plan.Start.mayEvict)
 		}
 		if why == "" {
 			return idleOK

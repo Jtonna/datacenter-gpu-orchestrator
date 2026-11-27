@@ -210,10 +210,13 @@ type inst struct {
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
-	// launchNote: what the launch changed from the profile as stored (a
-	// checkpoint flag of its own dropped in favour of the setting;
-	// noteDroppedCkptFlag); shown in the instance's status.
-	launchNote string
+	// anonBase is the host process's anonymous memory at its first reading
+	// after ready, anonNow the latest (anonAt), for a model hosted on the
+	// scheduler's machine: what it took since counts against its maximum
+	// (hostbudget.go takenOf).
+	anonBase, anonNow int
+	anonBaseSet       bool
+	anonAt            time.Time
 	// ckptChecked: bit 1 the recurrent state, bit 2 the first checkpoint,
 	// compared with the formula (hostmem.go checkHostMemorySizes).
 	ckptChecked int
@@ -440,6 +443,8 @@ type schedCore struct {
 	servedBuild  string                          // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
 	gated        gateMark                        // the latest gate call (checkGated)
 	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
+
+	localMem localMemReading // the scheduler machine's MemAvailable (hostbudget.go)
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool

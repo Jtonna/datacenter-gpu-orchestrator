@@ -80,7 +80,7 @@ func TestUINextBenchGroupPage(t *testing.T) {
 				"Smallest that fits", "placed by the scheduler, and all", "context 8,192", "carries on after a failure", "waits until idle", "cold loads",
 				"Runs", "22", "Compare two", "All 22 runs ›", "cold: caches dropped and verified on every load (24 loads)"},
 			"pageHas": []string{"aside.side .bp-run[data-run='46'] button.bp-pin.on[aria-pressed=true]", "aside.side a.bp-all[href='#/benchmarks/runs?suite=all-load']",
-				"aside.side [data-notyet=b7]", "aside.side [data-notyet=b10]", "aside.side [data-notyet=edit]", "aside.side [data-notyet=run]",
+				"aside.side [data-notyet=b7]", "aside.side [data-notyet=b10]", "aside.side a[data-act=edit][href='#/benchmarks/group/all-load/edit']", "aside.side .bp-acts button[data-act=run][data-run-kind=group][data-run-id=all-load]",
 				"aside.side .bp-entry .bp-opts .bp-notyet[data-notyet=b6]"},
 			"titles":    []string{`Not available yet: a group cannot ask for "the smallest that fits" yet: the placements are auto, all, any N or named zones (benchmarks slice 7: B6)`},
 			"pageCount": map[string]any{"aside.side .bp-run": 5},
@@ -100,8 +100,8 @@ func TestUINextBenchGroupPage(t *testing.T) {
 		map[string]any{"name": "group page: Duplicate asks a new id and a comment, then posts the copy", "route": "#/benchmarks/all/all-load", "status": st,
 			"click": []any{"aside.side button[data-act=duplicate]", map[string]any{"type": "div.dlg input[name=id]", "value": "all-load-copy"},
 				map[string]any{"type": "div.dlg textarea.dlg-comment", "value": "try a third placement"}, "div.dlg .dlg-foot button.pri"},
-			"fetchedQuery": []string{`^POST /api/bench/groups \{"id":"all-load-copy","name":"All models: load and response \(copy\)",.*"benchmarks":\[\{"benchmark":"cold-response-repeat"`},
-			"sentHeader":   []string{"^X-Comment: try a third placement$"}, "hash": "#/benchmarks/all/all-load-copy"},
+			"fetchedQuery": []string{`^POST /api/bench/groups \{"id":"all-load-copy","name":"All models: load and response \(copy\)",.*"benchmarks":\[\{"benchmark":"cold-response-repeat".*"comment":"try a third placement"\}$`},
+			"hash":         "#/benchmarks/all/all-load-copy"},
 		map[string]any{"name": "group page: the pin asks why, then unpins", "route": "#/benchmarks/all/all-load", "status": st,
 			"click":        []any{"aside.side .bp-run[data-run='46'] button.bp-pin", map[string]any{"type": "div.dlg textarea.dlg-comment", "value": "not needed"}, "div.dlg .dlg-foot button.pri"},
 			"fetchedQuery": []string{`^DELETE /api/bench/runs/run-46/pin`}, "sentHeader": []string{"^X-Comment: not needed$"}},
@@ -173,8 +173,8 @@ func TestUINextBenchPages(t *testing.T) {
 		// board Bench-Runs-Load: the Reload columns and the From and Context filters
 		map[string]any{"name": "load times: the Reload columns", "route": "#/benchmarks/runs?show=load-times", "status": st,
 			"expect": []string{"Reload, smallest", "Reload, all 6", "2.0 s", "From: latest run of each", "Context: any", "Context: 8,192", "Context: 4,096"},
-			"has":   []string{"select.fs[aria-label=From]", "select.fs[aria-label=Context]", "tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td[data-fig='reload_s:s'] a.bp-fv"},
-			"order": []string{"Cold, smallest", "Cold, all 6", "Reload, smallest", "Reload, all 6"}},
+			"has":    []string{"select.fs[aria-label=From]", "select.fs[aria-label=Context]", "tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td[data-fig='reload_s:s'] a.bp-fv"},
+			"order":  []string{"Cold, smallest", "Cold, all 6", "Reload, smallest", "Reload, all 6"}},
 		map[string]any{"name": "load times: From one run", "route": "#/benchmarks/runs?show=load-times&from=47", "status": st,
 			"fetchedQuery": []string{`^GET /api/bench/results/models\?run=47$`}, "count": map[string]any{"table.bp-res-t tbody tr": 1}},
 		map[string]any{"name": "load times: pick a run in From", "route": "#/benchmarks/runs?show=load-times", "status": st,
@@ -184,7 +184,7 @@ func TestUINextBenchPages(t *testing.T) {
 		// board Bench-Report #2: the view beside the report keeps its place,
 		// narrows to its first figure, and outlines the cell whose report is open
 		map[string]any{"name": "report beside load times: the selected cell", "route": "#/benchmarks/runs/run-46/0?show=load-times&fig=cold_load_s:s", "status": st, "width": 1536,
-			"has":    []string{"table.bp-res-t[data-view=load-times] tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td.sel[data-fig='cold_load_s:s'] a.bp-fv.sel[aria-current=true]",
+			"has": []string{"table.bp-res-t[data-view=load-times] tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td.sel[data-fig='cold_load_s:s'] a.bp-fv.sel[aria-current=true]",
 				"a.bp-fv[href='#/benchmarks/runs/run-46/2?show=load-times&fig=cold_load_s%3As']"},
 			"count":  map[string]any{"table.bp-res-t td.sel": 1},
 			"absent": []string{"Reload, smallest"}, "pageHas": []string{"aside.side"}},
@@ -223,9 +223,12 @@ func TestUINextBenchPages(t *testing.T) {
 			"notOnPage": []string{"by the memory reservation rule"}, "titles": []string{"does not fit ra-01 by the memory reservation rule"},
 			// the sub-heading is the recipe's title, not the first step's generated name
 			"notOnPageRe": []string{`Cold load, response and repeat \(`},
-			"pageNone":  []string{"aside.side [data-act=cancel]"}},
+			"pageNone":    []string{"aside.side [data-act=cancel]"}},
+		// one Cancel in the panel, the banner's; no Run again while it runs (the review of 26 Nov)
 		map[string]any{"name": "run panel: Cancel on a running run", "route": "#/benchmarks/runs/49", "status": st, "width": 1536,
-			"pageHas": []string{"aside.side .bp-acts .bp-notyet[data-notyet=run] [data-act=cancel]"}},
+			"pageHas":   []string{"aside.side .bp-live button.dng[data-act=cancel][data-cancel=run-49]"},
+			"pageNone":  []string{"aside.side [data-notyet=run]", "aside.side .bp-acts [data-act=cancel]", "aside.side [data-act=run-again]"},
+			"pageCount": map[string]any{"aside.side [data-act=cancel]": 1}},
 		map[string]any{"name": "run panel: All reports", "route": "#/benchmarks/runs/46", "status": st, "click": []string{"aside.side button.bp-all"},
 			"pageCount": map[string]any{"aside.side a.bp-rep": 24}},
 		map[string]any{"name": "run panel: an unknown run", "route": "#/benchmarks/runs/999", "status": st, "page": []string{"There is no such run"}},
@@ -236,7 +239,7 @@ func TestUINextBenchPages(t *testing.T) {
 				"First token, s", "Total time, s", "Open full report", "Download PDF", "Run again", "The whole run"},
 			"pageHas": []string{"aside.side a[href='/api/bench/runs/run-47/report?step=0&format=html']", "aside.side .bp-head[data-head=cold]", "aside.side .bp-head[data-head=reload]",
 				"aside.side .bp-head[data-head=tps]", "aside.side .bp-head[data-head=ttft]"},
-			"pageNone":  []string{"aside.side .bp-heads [data-notyet]", "aside.side .bp-head[data-missing]"},
+			"pageNone": []string{"aside.side .bp-heads [data-notyet]", "aside.side .bp-head[data-missing]"},
 			// the runner's generated name ("... (qwen2.5-72b-instruct-q2_k.gguf, 8k, all)") is not printed: its words are beside it
 			"notOnPageRe": []string{`\(qwen2\.5-72b-instruct-q2_k\.gguf`, `8k, all\)`},
 			"pageCount":   map[string]any{"aside.side table.bp-stats": 2, "aside.side li.bp-step": 7}},
@@ -351,14 +354,14 @@ func TestUINextBenchPageOpenReads(t *testing.T) {
 	tick := []any{map[string]any{"type": "status", "data": st}, map[string]any{"type": "status", "data": st}, map[string]any{"type": "status", "data": st}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": f, "cases": []any{
 		map[string]any{"name": "runs: the list read once, the menu's total once", "route": "#/benchmarks/runs", "status": st, "ws": tick,
-			"expect": []string{"1–12 of 49"},
+			"expect":       []string{"1–12 of 49"},
 			"fetchedCount": map[string]any{`^GET /api/bench/runs\?(.*&)?offset=`: 1, `^GET /api/bench/runs\?limit=1$`: 1, `^GET /api/bench/runs\b`: 2, `^GET /api/bench/results/models`: 0}},
 		// the list's answer still on its way while live messages draw the page again
 		map[string]any{"name": "runs: the list asked once while its answer is on its way", "route": "#/benchmarks/runs", "status": st, "ws": tick,
 			"fetch":        map[string]any{"/api/bench/runs": map[string]any{"$match": []any{[]any{`offset=`, map[string]any{"$hang": true}}, []any{`.`, f["/api/bench/runs"]}}}},
 			"fetchedCount": map[string]any{`^GET /api/bench/runs\?(.*&)?offset=`: 1}},
 		map[string]any{"name": "overview: the recent runs and the menu's total", "route": "#/benchmarks", "status": st, "ws": tick,
-			"expect": []string{"Recent runs"},
+			"expect":       []string{"Recent runs"},
 			"fetchedCount": map[string]any{`^GET /api/bench/runs\?limit=4$`: 1, `^GET /api/bench/runs\b`: 2, `^GET /api/bench/results/models`: 1}},
 		map[string]any{"name": "groups: no runs list but the menu's total", "route": "#/benchmarks/all", "status": st, "ws": tick,
 			"fetchedCount": map[string]any{`^GET /api/bench/runs\b`: 1, `^GET /api/bench/results/models`: 0}},
@@ -375,6 +378,7 @@ func TestUINextBenchPageOpenReads(t *testing.T) {
 //   - .drawer: the drawer (core/panel.js);
 //   - .dlg: every dialog;
 //   - .hp: the System health popup (it scrolls on a narrow window).
+//
 // A box that scrolls inside one of them (a list in a dialog) is left to
 // chain to it, so the wheel over it still moves the panel.
 func TestUINextScrollingPanelsKeepTheWheel(t *testing.T) {

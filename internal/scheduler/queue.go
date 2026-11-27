@@ -148,6 +148,22 @@ func (c *schedCore) place(e *entry) bool {
 	if c.forcedFitWaits(e.prof, pl) { // neverfits.go
 		return false
 	}
+	// hostbudget.go: its conversation memory must fit the machine that
+	// hosts it; idle models hosted there are unloaded first (a claim on
+	// the placement's nodes, as step 2 makes), else it waits
+	hv, wait, refuse := c.hostCheck(e.prof, nil, e.clock)
+	if refuse != nil {
+		c.log.Warn("request can never fit the conversation memory of the machine that hosts it; refused", "profile", e.prof.Name, "reason", refuse.Message)
+		c.answerEntry(e, refuse)
+		return true
+	}
+	if wait {
+		return false
+	}
+	if len(hv) > 0 {
+		c.claimFor(e, pl.Nodes, hv, "conversation memory on "+c.serverName())
+		return true
+	}
 	c.deleteEntry(e)
 	c.startInstance(e.prof, pl, e.waiters, e)
 	return true
@@ -196,21 +212,55 @@ func (c *schedCore) plan(e *entry) bool {
 		c.answerEntry(e, ferr)
 		return true
 	}
-	e.claim = make([]core.NodeID, 0, len(res.Placement.Nodes))
-	for _, n := range res.Placement.Nodes {
+	// hostbudget.go: with the device victims gone, its conversation memory
+	// must fit the machine that hosts it; idle models hosted there join
+	// the victims, else it waits
+	hv, wait, refuse := c.hostCheck(e.prof, res.Victims, e.clock)
+	if refuse != nil {
+		c.log.Warn("request can never fit the conversation memory of the machine that hosts it; refused", "profile", e.prof.Name, "reason", refuse.Message)
+		c.answerEntry(e, refuse)
+		return true
+	}
+	if wait {
+		return false
+	}
+	c.claimFor(e, res.Placement.Nodes, res.Victims, "")
+	if len(hv) > 0 {
+		c.addVictims(e, hv, "conversation memory on "+c.serverName())
+	}
+	return true
+}
+
+// claimFor makes e's claim on nodes and evicts victims for it (step 2);
+// why, when set, says what the room is for in the eviction record.
+func (c *schedCore) claimFor(e *entry, nodes []core.PlacedNode, victims []string, why string) {
+	e.claim = make([]core.NodeID, 0, len(nodes))
+	for _, n := range nodes {
 		e.claim = append(e.claim, n.ID)
 		c.ns(n.ID).claim = e.prof.Name
 	}
-	e.victims = slices.Clone(res.Victims)
+	e.victims = nil
 	e.stoppedAny = false
-	c.occEvicted(e, res.Victims) // occupied.go
 	c.changed = true
-	c.log.Info("claim made", "profile", e.prof.Name, "nodes", nodeIDStrings(e.claim), "victims", slices.Clone(res.Victims),
+	c.log.Info("claim made", "profile", e.prof.Name, "nodes", nodeIDStrings(e.claim), "victims", slices.Clone(victims),
 		"waiters", len(e.waiters))
-	for _, v := range res.Victims {
+	c.addVictims(e, victims, why)
+}
+
+// addVictims evicts victims for e's claim: an idle one stops, a busy one
+// drains first.
+func (c *schedCore) addVictims(e *entry, victims []string, why string) {
+	e.victims = append(e.victims, victims...)
+	c.occEvicted(e, victims) // occupied.go
+	c.changed = true
+	room := ""
+	if why != "" {
+		room = " (" + why + ")"
+	}
+	for _, v := range victims {
 		in := c.insts[v]
 		c.recordInst(in, history.TEviction, history.Info,
-			fmt.Sprintf("%s is being evicted to make room for %s, which waited %s (%d waiting).", v, e.prof.Name,
+			fmt.Sprintf("%s is being evicted to make room%s for %s, which waited %s (%d waiting).", v, room, e.prof.Name,
 				e.clock.Round(time.Second), len(e.waiters)),
 			map[string]any{"victim": v, "for_profile": e.prof.Name, "waited_s": secs(e.clock), "waiters": len(e.waiters),
 				"victim_busy": in.inFlight > 0, "in_flight": in.inFlight})
@@ -224,7 +274,6 @@ func (c *schedCore) plan(e *entry) bool {
 				"in_flight", in.inFlight)
 		}
 	}
-	return true
 }
 
 // evictables lists the instances evictable for an entry of profile p
@@ -357,6 +406,13 @@ func (c *schedCore) startOnClaim(e *entry) bool {
 		return true
 	}
 	if err == nil && gate == "" {
+		if r, ok := c.serverHostRoom(e.prof, nil); ok && r.Known && !r.Fits {
+			// hostbudget.go: the machine that hosts it has less than when
+			// the claim was made; plan again (place may unload idle models)
+			c.log.Info("claim dropped: its conversation memory no longer fits the machine that hosts it", "profile", e.prof.Name, "detail", r.hostShortWords())
+			c.dropClaim(e)
+			return false
+		}
 		c.dropClaim(e) // nodes it does not use are released
 		c.deleteEntry(e)
 		c.startInstance(e.prof, pl, e.waiters, e)

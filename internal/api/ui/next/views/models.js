@@ -299,9 +299,25 @@ function needsLine(m, st, f) {
 // keeps on the machine that hosts it, from its profiles' host_memory (GET
 // /api/profiles; scheduler hostmem.go), and whether what it needs counts
 // them (count_host_memory, a host on a node); nothing for a plain family
+//
+// p33: a profile may set its own --ctx-checkpoints / --cache-ram in its
+// extra arguments; each figure says where it comes from (checkpoints_from:
+// "from this profile's extra arguments" or "the cluster default"), and
+// profiles of one file with different figures are listed by group.
 function convMemory(m) {
-  const hm = (m.profiles || []).map(p => p.host_memory).find(x => x && x.family && x.family !== 'plain' && x.checkpoints > 0);
+  const withHM = (m.profiles || []).filter(p => { const x = p.host_memory; return x && x.family && x.family !== 'plain' && (x.checkpoints > 0 || x.checkpoints_from); });
+  const hm = (withHM.find(p => p.host_memory.checkpoints > 0) || {}).host_memory;
   if (!hm) return null;
+  // one group per distinct (restore points, MB, source)
+  const groups = [];
+  for (const p of withHM) {
+    const x = p.host_memory;
+    const k = [x.checkpoints, x.checkpoints_mib, x.checkpoints_from || ''].join('|');
+    let g = groups.find(y => y.k === k);
+    if (!g) groups.push(g = { k, x, ids: [] });
+    g.ids.push(p.id);
+  }
+  const fig = x => `up to ${num(x.checkpoints)} (${num(x.checkpoints_mib)} MB${x.checkpoints_from ? '; ' + x.checkpoints_from : ''})`;
   const lead = 'Conversation memory: this model keeps restore points on the machine that hosts it: ';
   // a window model whose size the header does not tell: no number until a load's log gives it
   if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load.');
@@ -310,7 +326,8 @@ function convMemory(m) {
   const each = hm.from_log ? `${mb} MB each as the server logged it at a load of ${hm.logged_file} at ctx ${num(hm.logged_ctx)}`
     : hm.estimate ? `at most ${mb} MB each` : `about ${mb} MB each`;
   return h('div.mut', { 'data-convmem': hm.from_log ? 'logged' : '', title: hm.from_log ? `Read from the model server's log this run (file of ${num(hm.logged_file_bytes)} bytes); kept until a restart` : null },
-    lead + `${each}, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)` + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
+    lead + each + (groups.length > 1 ? '; by profile: ' + groups.map(g => fig(g.x) + ' for ' + g.ids.join(', ')).join('; ') : ', ' + fig(hm)) +
+      (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
 }
 
 // the side panel of one model

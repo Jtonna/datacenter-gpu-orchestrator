@@ -390,7 +390,7 @@ type Step struct {
 	Profile     string               `json:"profile"`
 	State       string               `json:"state"`
 	Outcome     string               `json:"outcome,omitempty"`
-	Reason      string               `json:"reason,omitempty"` // the scheduler's words for a refusal or failure
+	Reason      string               `json:"reason,omitempty"`       // the scheduler's words for a refusal or failure
 	ReasonShort string               `json:"reason_short,omitempty"` // a refusal in a few words (ShortReason; read time, not stored)
 	HTTPStatus  int                  `json:"http_status,omitempty"`
 	LogFile     string               `json:"log_file,omitempty"`
@@ -469,6 +469,13 @@ type Run struct {
 	Counts *RunCounts   `json:"counts,omitempty"`
 	Cold   *ColdSummary `json:"cold,omitempty"`
 	Inputs *RunInputs   `json:"inputs,omitempty"`
+	// StartedBy and StartComment: who started the run and why (the run's
+	// stored plan keeps them; empty for a scheduled run or one started
+	// before release v88).
+	StartedBy    string `json:"started_by,omitempty"`
+	StartComment string `json:"start_comment,omitempty"`
+
+	cancelBy, cancelWhy string // who cancelled a queued run and why (history data)
 }
 
 // RunFilter selects runs for a listing.

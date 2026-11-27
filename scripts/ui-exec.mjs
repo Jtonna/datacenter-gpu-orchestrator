@@ -764,6 +764,8 @@ for (const c of spec.cases) {
     if (want && want !== true && tiles.length !== Number(want)) errors.push(`the Nodes page drew ${tiles.length} tiles, want ${want}`);
     if (flag('--reserved')) for (const r of rows) if (!r.excluded && !r.reserved) errors.push(`no reserved-against-measured block on ${r.name}`);
   }
+  // a page left with unsaved changes would ask; the next case starts clean
+  if (router.setLeaveGuard) router.setLeaveGuard(null);
   await go('#/__ui_exec_blank'); // unmounts the screen
   // a dialog or a popover left open by a case is closed the way a person would
   for (let i = 0; i < 3 && document.body.querySelector('div.backdrop, div.pop'); i++) {
