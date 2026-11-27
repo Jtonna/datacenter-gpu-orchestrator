@@ -249,7 +249,7 @@ function planView(plan, err, sig) {
       h('span', plan.action === 'reject' ? reason || 'The scheduler refuses this load.' : text)),
     victims.length ? h('div.hit', h('i.a'), h('span', 'It unloads ', h('span.mono', victims.join(', ')), ' first.')) : null,
     plan.action !== 'reject' && reason ? h('div.hit', h('i'), h('span', { title: reason }, plan.action === 'queue' ? 'Why it waits: ' : '', reason)) : null,
-    mem.length ? h('div.mut', { 'data-memory': '', style: 'font-weight:600' }, mem.map((x, i) => [i ? ' · ' : '', x])) : null,
+    mem.length ? h('div.mut', { 'data-memory': '' }, mem.map((x, i) => [i ? ' · ' : '', x])) : null,
     plan.warning ? h('div.box.warn', h('div.pt', h('span', String(plan.warning)))) : null);
 }
 
@@ -822,12 +822,12 @@ registerView({
           fact('In use', h('b', num((doc.counts && doc.counts.in_use) || 0), h('span.mut.of', ` of ${plural(count, 'zone')}`))),
           fact('Ping, average', h('b.mut', { title: 'Ping is not measured yet: the agents do not time their heartbeat to Potluck (it needs the agent track).' }, 'not measured')),
           fact(since ? 'Uptime, since ' + since : 'Uptime, 7 days', h('b', pctText(up)))),
-        h('div.dh', { key: 'attn-h' }, h('h3', 'Needs attention ', h('span.mut', { style: 'font-size:12px;font-weight:600' }, num(attn.length)))),
+        h('div.dh', { key: 'attn-h' }, h('h3', 'Needs attention ', h('span.mut', { style: 'font-size:12px;font-weight:var(--w-label)' }, num(attn.length)))),
         attn.length ? attn.map(a => {
           const x = zoneOfId(a.id);
           const z = x ? x.z : { square: 'down', label: a.state === 'lost' ? 'Offline' : 'Set aside', rest: null };
           return h('div.pf.attn', { key: 'attn-' + a.id, 'data-attn': a.id, role: 'button', tabindex: '0', onclick: () => pickZone(a.id), onkeydown: e => { if (e.key === 'Enter') pickZone(a.id); } },
-            h('span.mono', { style: 'font-weight:500' }, a.name || (x && x.name) || a.id),
+            h('span.mono', { style: 'font-weight:var(--w-body)' }, a.name || (x && x.name) || a.id),
             h('span.sts', h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }), h('span.stx', z.label, z.rest)),
             h('span.chev', icon('M8 5l5 5-5 5', 15)));
         }) : h('div.pf.none', { key: 'attn-none' }, h('span.mut', 'Nothing needs a look: every zone of it is reachable.')),
@@ -836,9 +836,9 @@ registerView({
           const inst = ((state.status || {}).instances || []).find(i => i.profile === m.profile);
           const dr = isDraining(inst);
           return h('div.pf', { key: 'm-' + m.profile, 'data-model': m.profile },
-            h('span', h('span.mono', { style: 'font-weight:500', title: m.profile }, modelName(m.profile)),
-              dr ? h('span.mut', { style: 'font-size:12px;font-weight:600', 'data-draining': '' }, ' · unloads when its requests end, ' + drainText(inst)) : null),
-            h('span', { style: 'text-align:right;font-weight:600' }, plural(m.zones || 0, 'zone')),
+            h('span', h('span.mono', { style: 'font-weight:var(--w-body)', title: m.profile }, modelName(m.profile)),
+              dr ? h('span.mut', { style: 'font-size:12px', 'data-draining': '' }, ' · unloads when its requests end, ' + drainText(inst)) : null),
+            h('span', { style: 'text-align:right' }, plural(m.zones || 0, 'zone')),
             dr ? button('Cancel unload', () => undrainAsk(m.profile), 'sm', { 'data-undrain': m.profile, style: 'justify-content:center', title: 'Take the unload back: it takes requests again' })
               : button('Unload', () => askUnload(m.profile, { group: name }), 'sm', { 'data-unload': m.profile, style: 'justify-content:center' }));
         })
@@ -860,7 +860,7 @@ registerView({
         const d = doc();
         if (!d) return null;
         const v = d.accepting === 'all' ? 'true' : d.accepting === 'none' ? 'false' : 'mixed';
-        return h('label.gsw', v === 'mixed' ? h('span.mut', { style: 'font-weight:600' }, 'Some zones') : null, 'Accepting models',
+        return h('label.gsw', v === 'mixed' ? h('span.mut', 'Some zones') : null, 'Accepting models',
           h('button.switch', { type: 'button', role: 'switch', 'aria-checked': v, 'aria-label': 'Accepting models', title: v === 'mixed' ? 'Some of its zones are not accepting models: switch it on to let them all accept again' : null,
             onclick: () => switchAsk(name, d) }, h('span')));
       };
@@ -896,7 +896,7 @@ registerView({
       const isGen = x => profileStage(x) === 'test'; // test profiles: their own group, under their shown names
       const label = x => { const s = modelName(x.id), n = profileLabel(x); return s && s !== x.id ? `${s} · ${n}` : n; };
       const cur_ = loadPick.get(id) || '';
-      const sel_ = h('select.select', { 'data-zp': 'profile', 'aria-label': 'Choose a profile', disabled: !list || !list.length, style: 'flex:1;font-weight:600',
+      const sel_ = h('select.select', { 'data-zp': 'profile', 'aria-label': 'Choose a profile', disabled: !list || !list.length, style: 'flex:1',
         onchange: e => { loadPick.set(id, e.target.value); if (side) side.redraw(); } },
         h('option', { value: '', selected: !cur_ }, !list ? 'Reading the profiles…' : profs.error ? 'The profiles could not be read' : list.length ? 'Choose a profile' : 'No profile to load'),
         list ? [list.filter(x => !isGen(x)).map(x => h('option', { value: x.id, selected: x.id === cur_ }, label(x))),
@@ -913,7 +913,7 @@ registerView({
       return h('div.sts', { title: z.title },
         h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }),
         z.pill === 'down' ? z.label : STATE_SHORT[z.pill] || z.label,
-        h('span.mut', { style: 'font-weight:600' }, ' · ' + (g || 'No group') + (n.priority ? ' · tier ' + n.priority : '')));
+        h('span.mut', ' · ' + (g || 'No group') + (n.priority ? ' · tier ' + n.priority : '')));
     }
     function zoneSwitch(st, n) {
       const a = agentOf(st, n);
@@ -986,14 +986,14 @@ registerView({
         if (pins.length) parts.push(h('span', { 'data-pinned': '', title: 'Loaded on chosen zones: ' + pins.map(nameOfId).join(', ') + '. Its next ordinary load is placed as its profile says.' }, 'on chosen zones'));
         const dr = isDraining(inst);
         loaded = h('div.zl', { key: 'loaded' },
-          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:500', title: inst.profile }, modelName(inst.profile)),
-            h('div.mut', { style: 'font-weight:600' }, parts.map((p, i) => [i ? ' · ' : '', p])),
-            dr ? h('div', { 'data-draining': '', style: 'font-weight:600;font-size:12px' }, 'Unloads when its requests end, ' + drainText(inst) + '. New requests wait in the queue.') : null),
+          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:var(--w-body)', title: inst.profile }, modelName(inst.profile)),
+            h('div.mut', parts.map((p, i) => [i ? ' · ' : '', p])),
+            dr ? h('div', { 'data-draining': '', style: 'font-size:12px' }, 'Unloads when its requests end, ' + drainText(inst) + '. New requests wait in the queue.') : null),
           dr ? button('Cancel unload', () => undrainAsk(inst.profile), '', { 'data-zp': 'undrain', title: 'Take the unload back: it takes requests again' }) : null,
           button('Force unload', () => askUnload(inst.profile, { zone: id }), 'red', { 'data-zp': 'force' }));
       } else {
         const z = zoneOf(st, n);
-        loaded = h('div.zl', { key: 'loaded' }, h('span.mut', { style: 'font-weight:600' }, 'Nothing is loaded.', z.pill === 'free' && z.label !== 'Free' ? [' ', z.label, z.rest] : null));
+        loaded = h('div.zl', { key: 'loaded' }, h('span.mut', 'Nothing is loaded.', z.pill === 'free' && z.label !== 'Free' ? [' ', z.label, z.rest] : null));
       }
       const w = week && week.id === id ? week : null;
       return [
@@ -1150,7 +1150,7 @@ registerView({
           onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); pick(x.id); } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) rowMenu(x, { preventDefault: () => e.preventDefault() }, e.currentTarget); } },
         canTick(x) ? h('input', { class: 'cb', type: 'checkbox', checked: sel.has(x.id), 'aria-label': 'Select ' + x.name, 'data-sel': x.id,
           onclick: e => { e.stopPropagation(); toggle(x.id); }, onkeydown: e => e.stopPropagation() }) : h('span'),
-        h('span.zn', { style: indent ? 'padding-left:26px' : null }, h('span.mono.znm', x.name), x.chip && mixedChip.has(x.group) ? h('span.mut', { style: 'font-weight:600' }, ' | ' + x.chip) : null),
+        h('span.zn', { style: indent ? 'padding-left:26px' : null }, h('span.mono.znm', x.name), x.chip && mixedChip.has(x.group) ? h('span.mut', ' | ' + x.chip) : null),
         h('span.sts', { title: z.title }, h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }), h('span.stx', z.label, z.rest)),
         h('span', { class: 'r mono' + (!x.mem || off ? ' mut' : '') }, memText(x.mem)),
         narrow ? null : [
@@ -1254,7 +1254,7 @@ registerView({
         bulkCount('unpause') ? bulkButton('unpause') : null,
         button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }),
         button('Clear', () => { sel.clear(); view.refresh(); }, 'sm ghost', { 'data-act': 'clear' }));
-      const totals = narrow && pages === 1 ? h('span.mut', { style: 'font-weight:600' }, (gs.length ? plural(gs.length, 'group') + ' · ' : '') + plural(all.length, 'zone')) : null;
+      const totals = narrow && pages === 1 ? h('span.mut', (gs.length ? plural(gs.length, 'group') + ' · ' : '') + plural(all.length, 'zone')) : null;
       const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : narrow ? totals : keyPart,
         // no pager (no "Page 1 of 1") when everything fits on one page
         pages > 1 ? pager({ page, pages, onPage: n => setQuery({ page: n === 1 ? '' : String(n) }, true), label: 'Zone pages' }) : null);

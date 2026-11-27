@@ -35,8 +35,8 @@ function details(e) {
   return h('div.col', { style: 'gap:12px;margin-top:10px' },
     (e.diff || []).length ? diffView(e.diff) : null,
     hasBefore || hasAfter ? h('div.grid', { style: 'grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:12px' },
-      hasBefore ? h('div.col', { style: 'gap:4px;min-width:0' }, h('span.mut', { style: 'font-weight:700;font-size:var(--fs-sm)' }, 'Before'), h('pre.mono', { style: 'margin:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--inset);overflow:auto;max-height:260px;font-size:var(--fs-sm)' }, json(e.before))) : null,
-      hasAfter ? h('div.col', { style: 'gap:4px;min-width:0' }, h('span.mut', { style: 'font-weight:700;font-size:var(--fs-sm)' }, 'After'), h('pre.mono', { style: 'margin:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--inset);overflow:auto;max-height:260px;font-size:var(--fs-sm)' }, json(e.after))) : null) : null,
+      hasBefore ? h('div.col', { style: 'gap:4px;min-width:0' }, h('span.mut', { style: 'font-weight:var(--w-label);font-size:var(--fs-sm)' }, 'Before'), h('pre.mono', { style: 'margin:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--inset);overflow:auto;max-height:260px;font-size:var(--fs-sm)' }, json(e.before))) : null,
+      hasAfter ? h('div.col', { style: 'gap:4px;min-width:0' }, h('span.mut', { style: 'font-weight:var(--w-label);font-size:var(--fs-sm)' }, 'After'), h('pre.mono', { style: 'margin:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--inset);overflow:auto;max-height:260px;font-size:var(--fs-sm)' }, json(e.after))) : null) : null,
     h('dl.kv', { style: 'font-size:var(--fs-md)' },
       h('dt', 'Entry'), h('dd.mono', '#' + e.id),
       h('dt', 'Time'), h('dd', at(e.ts)),
@@ -184,7 +184,7 @@ registerView({
     // ---- drawing: trail ----
     function filterBar() {
       const f = filters();
-      const sel = (label, key, options) => h('label', { style: 'display:flex;flex-direction:column;gap:4px;font-size:var(--fs-sm);font-weight:700;color:var(--mut);min-width:0' }, label,
+      const sel = (label, key, options) => h('label', { style: 'display:flex;flex-direction:column;gap:4px;font-size:var(--fs-sm);font-weight:var(--w-label);color:var(--mut);min-width:0' }, label,
         h('select.select', { style: 'min-width:150px', 'aria-label': label, onchange: e => setFilter({ [key]: e.target.value }) },
           h('option', { value: '', selected: !f[key] }, 'Any'), options.map(([v, t]) => h('option', { value: v, selected: f[key] === v }, t))));
       const actors = [...knownActors].filter(a => !agentName(a)); // agents have their own filter
@@ -213,12 +213,12 @@ registerView({
     function entryRow(e) {
       const isOpen = open.has(e.id);
       return h('div', { key: 'e' + e.id, class: 'ev', style: fresh.has(e.id) ? 'box-shadow:inset 3px 0 0 var(--mint);background:var(--mint-bg)' : null },
-        h('span.mut', { style: 'font-weight:600' }, ago(e.ts)),
+        h('span.mut', ago(e.ts)),
         h('span', sourceBadge(e.source)),
         h('div', { style: 'min-width:0' },
           h('p', h('b', entrySentence(e)), ' ', e.section && !['profiles', 'tiers', 'settings'].includes(e.section) ? badge(sectionName(e.section), 'n') : null),
           h('p.d', 'by ', agentName(e.actor)
-            ? [h('a', { href: href('audit', null, { agent: e.agent_id, range: 'all' }), style: 'font-weight:700', title: 'Show everything this agent did' }, agentName(e.actor)), ' ',
+            ? [h('a', { href: href('audit', null, { agent: e.agent_id, range: 'all' }), style: 'font-weight:var(--w-strong)', title: 'Show everything this agent did' }, agentName(e.actor)), ' ',
               badge('Agent', 'n', 'An AI agent that presented its key. The key says who it is; it is not a permission.')]
             : h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes', 'no_auto_nodes', 'runtime', 'profiles', 'agents', 'models'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
             e.revision ? [' · ', h('a', { href: href('audit', ['revisions'], { rev: e.revision }), onclick: ev => { ev.preventDefault(); showRevision(e.revision); } }, 'Revision ' + e.revision)] : null,
@@ -261,7 +261,7 @@ registerView({
       else body = table({
         minWidth: 820, rows: revs, key: r => r.revision, onRow: r => showRevision(r.revision),
         columns: [
-          { label: 'Revision', cls: 'tight', render: r => h('span', h('span.mono', { style: 'font-weight:500' }, String(r.revision)), r.revision === current ? [' ', badge('Current', 'ready')] : null) },
+          { label: 'Revision', cls: 'tight', render: r => h('span', h('span.mono', { style: 'font-weight:var(--w-body)' }, String(r.revision)), r.revision === current ? [' ', badge('Current', 'ready')] : null) },
           { label: 'When', cls: 'tight', render: r => ago(r.ts) },
           { label: 'Source', cls: 'tight', render: r => sourceBadge(r.source) },
           { label: 'Who', cls: 'tight', render: r => r.actor || 'anonymous' },

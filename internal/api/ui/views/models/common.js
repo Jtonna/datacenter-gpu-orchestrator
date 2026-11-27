@@ -111,7 +111,7 @@ function head(st, inst, model, extra) {
     avatar(model || { name: inst.model_file || inst.profile }, 28),
     h('h2.name', key ? h('a', { href: href('models', [key]), style: 'color:inherit' }, model ? model.name : inst.model_file) : inst.profile),
     instanceBadge(inst), testRun(inst), extra, staleMark(inst),
-    h('span.mut', { style: 'font-weight:600' }, 'on ', nodeChips(names),
+    h('span.mut', 'on ', nodeChips(names),
       inst.waiters > 0 && inst.state === 'starting' ? ` · ${plural(inst.waiters, 'request')} waiting for it` : null),
     h('span.cfg.right', { title: 'The configuration (profile) it was loaded with' }, inst.profile),
     instanceLogs(st, inst));
@@ -194,15 +194,15 @@ function loadingCard(st, inst, model, open, toggle) {
     { label: 'Ready', state: '', note: eta != null && stalled == null ? ['Expected ≈ ', clock(now() + eta * 1000, false)] : 'Not known yet' },
   ];
   const left = stalled != null ? h('span.err-t', `Stalled: nothing new for ${dur(Math.round(stalled))}`)
-    : eta != null ? h('span.mut', { style: 'font-weight:600' }, `About ${dur(eta < 90 ? Math.round(eta) : Math.round(eta / 60) * 60)} left`)
-      : h('span.mut', { style: 'font-weight:600' }, 'Time left not known yet');
+    : eta != null ? h('span.mut', `About ${dur(eta < 90 ? Math.round(eta) : Math.round(eta / 60) * 60)} left`)
+      : h('span.mut', 'Time left not known yet');
   return h('section', { class: 'card ' + (stalled != null ? 'flag-err' : ''), key: 'inst-' + inst.profile, 'aria-label': inst.profile },
     head(st, inst, model, stalled != null ? badge('Stalled', 'fail') : null),
     steps(stepItems),
     h('div.cb', progress({
       fraction: frac || 0, cls: stalled != null ? 'x' : 'a',
       label: frac != null ? `${Math.round(frac * 100)} percent loaded` : 'Load in progress',
-      left: h('span', frac != null ? h('span.pct', Math.round(frac * 100) + '%') : null, h('span.mut', { style: 'font-weight:600' }, frac != null ? ' · ' : '', `${dur(Math.round(elapsed))} elapsed`)),
+      left: h('span', frac != null ? h('span.pct', Math.round(frac * 100) + '%') : null, h('span.mut', frac != null ? ' · ' : '', `${dur(Math.round(elapsed))} elapsed`)),
       mid: left,
       right: deadline ? h('span', 'Gives up ', until(deadline)) : null,
       foot: [startedAt ? 'Started ' + clock(startedAt) : '', frac != null ? (measured ? 'Measured from the zones' : 'Estimated from the link speed') : ''],
@@ -244,13 +244,13 @@ export function planCell(p, st) {
   // Whether a reload of the model can come from the nodes' file cache.
   const reload = reloadLine(plan.reload_from_cache, r => r.node || nodeName(st, r.id));
   switch (plan.action) {
-    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
-    case 'serve': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Loaded now'), reload);
-    case 'wait': return h('span.warn-t', { style: 'font-weight:700' }, 'Loading now');
-    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
-    case 'queue': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'Would wait'), h('span.sub', plainReason(plan.reason)));
-    case 'backoff': return h('span', { title: raw }, h('span.err-t', { style: 'font-weight:700' }, 'Held back'), h('span.sub', 'Its last load failed'));
-    case 'reject': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'No'), h('span.sub', plainReason(plan.reason)));
+    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:var(--w-strong)' }, 'Yes'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
+    case 'serve': return h('span', h('span.ok-t', { style: 'font-weight:var(--w-strong)' }, 'Loaded now'), reload);
+    case 'wait': return h('span.warn-t', { style: 'font-weight:var(--w-strong)' }, 'Loading now');
+    case 'evict': return h('span', h('span', { style: 'font-weight:var(--w-strong)' }, 'Yes, after making room'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
+    case 'queue': return h('span', { title: raw }, h('span', { style: 'font-weight:var(--w-strong)' }, 'Would wait'), h('span.sub', plainReason(plan.reason)));
+    case 'backoff': return h('span', { title: raw }, h('span.err-t', { style: 'font-weight:var(--w-strong)' }, 'Held back'), h('span.sub', 'Its last load failed'));
+    case 'reject': return h('span', { title: raw }, h('span', { style: 'font-weight:var(--w-strong)' }, 'No'), h('span.sub', plainReason(plan.reason)));
   }
   return h('span.mut', plan.reason || 'Not known');
 }

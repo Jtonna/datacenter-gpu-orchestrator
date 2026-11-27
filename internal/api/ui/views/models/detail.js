@@ -221,7 +221,7 @@ function configCard(m, st, showGenerated, toggleGenerated) {
     table({
       rows, key: p => p.id, minWidth: 900,
       columns: [
-        { label: 'Profile', render: p => h('span', h('span.mono.nowrap', { style: 'font-weight:500' }, p.id), loaded.has(p.id) ? [' ', badge('Loaded', 'ready')] : null,
+        { label: 'Profile', render: p => h('span', h('span.mono.nowrap', { style: 'font-weight:var(--w-body)' }, p.id), loaded.has(p.id) ? [' ', badge('Loaded', 'ready')] : null,
           (p.aliases || []).length ? h('span.sub', 'also ' + p.aliases.join(', ')) : null) },
         { label: 'Made', cls: 'tight', render: p => (p.generated ? h('span.quiet', { title: 'An auto-generated benchmark configuration' }, 'Generated') : 'By hand') },
         { label: 'Context', cls: 'r', render: p => ctx(p.ctx) },
@@ -359,7 +359,7 @@ export function mountDetail(el, key) {
           h('span.sub', cur.publisher ? [cur.publisher, ' · '] : null, sizeLine(cur), cur.family ? [' · ', cur.family] : null),
           h('div.row', { style: 'gap:8px;margin-top:8px' },
             h('button', { type: 'button', class: 'btn sm', onclick: () => changeIcon(cur, load) }, 'Change icon'),
-            cur.icon ? h('span.mut', { style: 'font-size:12px;font-weight:600' }, cur.icon.scope === 'family' ? 'Using the icon of its family' : 'Using its own icon') : null))),
+            cur.icon ? h('span.mut', { style: 'font-size:12px' }, cur.icon.scope === 'family' ? 'Using the icon of its family' : 'Using its own icon') : null))),
       staleBanner(),
       error && m ? h('div.banner.warn', { role: 'status' }, 'The newest figures could not be read: ' + error) : null,
       cur.kind === 'llama' && !cur.exists ? h('div.banner.err', { role: 'status' }, h('span.grow', h('b', 'The model file is missing. '), 'A profile names ', h('span.mono', cur.file), ', but it is not in the models directory, so it cannot be loaded.')) : null,

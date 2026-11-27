@@ -299,8 +299,8 @@ export function tile(st, n, refresh) {
     h('div.foot',
       facts([
         ['Address', h('span', n.addr || (n.local ? 'this machine' : 'not known')), n.addr ? 'The address of its worker' : null],
-        ['Priority', h('span', n.priority ? String(n.priority) : 'no tier matches', n.priority ? h('span.mut', { style: 'font-family:var(--sans);font-weight:600' }, n.priority === 1 ? ' · used first' : '') : null), 'Lower numbers are used first when a model is placed'],
-        n.health && n.health.channels && !excl ? ['Health', h('span', { style: 'font-family:var(--sans);font-weight:600' }, ['upload', 'heartbeat', 'probe'].filter(c => n.health.channels[c] && n.health.channels[c] !== 'unknown').map((c, i) => {
+        ['Priority', h('span', n.priority ? String(n.priority) : 'no tier matches', n.priority ? h('span.mut', { style: 'font-family:var(--sans)' }, n.priority === 1 ? ' · used first' : '') : null), 'Lower numbers are used first when a model is placed'],
+        n.health && n.health.channels && !excl ? ['Health', h('span', { style: 'font-family:var(--sans)' }, ['upload', 'heartbeat', 'probe'].filter(c => n.health.channels[c] && n.health.channels[c] !== 'unknown').map((c, i) => {
           const [txt, cls] = CHANNEL[n.health.channels[c]] || [n.health.channels[c], 'mut'];
           return [i ? ' · ' : '', c + ' ', h('span', { class: cls }, txt)];
         }), ['upload', 'heartbeat', 'probe'].every(c => !n.health.channels[c] || n.health.channels[c] === 'unknown') ? h('span.mut', 'no report yet') : null), 'The channels the scheduler watches the worker on'] : null,

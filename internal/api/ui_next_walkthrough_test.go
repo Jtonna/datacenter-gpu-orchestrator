@@ -2,6 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,4 +141,127 @@ func TestUINextBenchWalkthroughOverviewOrder(t *testing.T) {
 			"order": []string{"Recent runs", "All 49", "Latest result for each model"},
 			"has":   []string{"section.bp-recentcard", "section.bp-latest"}},
 	}})
+}
+
+// cssRule is one rule of a stylesheet: its selector, the @-block it sits in
+// ("" at the top), and its declarations as written.
+type cssRule struct{ at, sel, body string }
+
+// cssRules reads a stylesheet into its rules, comments removed, the rules
+// inside @media (and other conditional blocks) listed with their block.
+func cssRules(src string) []cssRule {
+	src = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(src, "")
+	var out []cssRule
+	var walk func(s, at string)
+	walk = func(s, at string) {
+		for i := 0; ; {
+			j := strings.IndexByte(s[i:], '{')
+			if j < 0 {
+				return
+			}
+			j += i
+			depth, k := 1, j+1
+			for depth > 0 && k < len(s) {
+				switch s[k] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				}
+				k++
+			}
+			sel, body := strings.TrimSpace(s[i:j]), s[j+1:k-1]
+			if strings.HasPrefix(sel, "@media") || strings.HasPrefix(sel, "@supports") || strings.HasPrefix(sel, "@container") {
+				walk(body, sel)
+			} else {
+				out = append(out, cssRule{at, sel, body})
+			}
+			i = k
+		}
+	}
+	walk(src, "")
+	return out
+}
+
+// W3.2: the weights are one rule for the whole product, set in the tokens
+// (the owner's walkthrough, build-92): body 500, labels and column headers
+// 600, the emphasised name 600, mono numbers 400, buttons 600, headings 700,
+// the page title 800. No rule writes a weight as a number; the heading and
+// title weights only on headings, titles and the big figures of a tile.
+func TestUINextWeightTokens(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("ui", "next", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := cssRules(string(raw))
+	want := map[string]string{"--w-body": "500", "--w-label": "600", "--w-strong": "600", "--w-num": "400", "--w-btn": "600", "--w-head": "700", "--w-title": "800"}
+	decl := regexp.MustCompile(`(?:^|[;{\s])(--w-[a-z]+)\s*:\s*([^;]+)`)
+	weight := regexp.MustCompile(`font-weight\s*:\s*([^;}]+)`)
+	got := map[string]string{}
+	bySel := map[string]string{}
+	// the selectors that may carry the heading or the title weight: a heading
+	// element, or one of these titles and tile figures
+	headOK := map[string]bool{".bign": true, ".menu-head b": true, ".stat>b": true, ".prog-top .pct": true, ".empty b": true, ".side-title": true,
+		".viz figcaption b": true, ".viz figcaption .fig": true, ".hp-title": true, ".fact b": true, ".plc-fig b": true, ".bp-sec": true, ".bp-h": true,
+		".bp-kpi b,.bp-head b": true, ".ed-h": true, ".ed-sec>h3": true, ".setp-title b": true, ".snip-h": true, ".cmp-h b": true}
+	titleOK := map[string]bool{".page-head h1": true, ".mhead h1": true}
+	headingEl := regexp.MustCompile(`(^|[\s>+~,])h[1-4]([^\w-]|$)`)
+	for _, r := range rules {
+		if r.sel == ":root" {
+			for _, m := range decl.FindAllStringSubmatch(r.body, -1) {
+				got[m[1]] = strings.TrimSpace(m[2])
+			}
+			continue
+		}
+		if strings.HasPrefix(r.sel, "@font-face") {
+			continue
+		}
+		for _, m := range weight.FindAllStringSubmatch(r.body, -1) {
+			v := strings.TrimSpace(m[1])
+			if v == "inherit" { // a bold word inside a heading keeps the heading's weight
+				continue
+			}
+			tok := strings.TrimSuffix(strings.TrimPrefix(v, "var("), ")")
+			if _, ok := want[tok]; !ok || !strings.HasPrefix(v, "var(") {
+				t.Errorf("%s %s: font-weight %q, want one of the weight tokens", r.at, r.sel, v)
+				continue
+			}
+			if r.at == "" {
+				bySel[r.sel] = tok
+			}
+			if tok == "--w-title" && !titleOK[r.sel] {
+				t.Errorf("%s: the title weight on what is not the page title", r.sel)
+			}
+			if tok == "--w-head" && !headOK[r.sel] && !headingEl.MatchString(r.sel) {
+				t.Errorf("%s: the heading weight on what is not a heading, title or tile figure", r.sel)
+			}
+		}
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf(":root %s = %q, want %s", k, got[k], v)
+		}
+	}
+	for sel, tok := range map[string]string{"body": "--w-body", "td": "--w-body", "th": "--w-label", ".mono": "--w-num", "b,strong": "--w-strong",
+		".btn": "--w-btn", ".lbl": "--w-label", ".ch h2": "--w-head", ".page-head h1": "--w-title", ".input.mono,.textarea.mono": "--w-num"} {
+		if bySel[sel] != tok {
+			t.Errorf("%s: font-weight %q, want var(%s)", sel, bySel[sel], tok)
+		}
+	}
+	// the views write no weight as a number in an inline style either
+	num := regexp.MustCompile(`font-weight\s*:\s*\d`)
+	for _, dir := range []string{filepath.Join("ui", "next"), filepath.Join("ui", "core"), filepath.Join("ui", "views")} {
+		filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".js") {
+				return err
+			}
+			b, _ := os.ReadFile(p)
+			for i, ln := range strings.Split(string(b), "\n") {
+				if num.MatchString(ln) {
+					t.Errorf("%s:%d: a font-weight written as a number: %s", p, i+1, strings.TrimSpace(ln))
+				}
+			}
+			return nil
+		})
+	}
 }

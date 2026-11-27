@@ -85,12 +85,12 @@ function entryCard(st, e, limitS) {
   if (backoff) why.push(['x', ['A load of this profile failed; new requests for it are refused until ', at(backoff.until)], badge(dur(Math.max(0, (toMs(backoff.until) - now()) / 1000)), 'aside')]);
   return h('article', { key: 'q-' + e.profile + '-' + e.created, style: 'display:flex;flex-direction:column;gap:14px;padding:18px 20px;border-top:1px solid var(--line)' },
     h('div.row', { style: 'align-items:baseline;gap:6px 14px' },
-      h('h3.mono', { style: 'font-size:16px;font-weight:500' }, e.profile),
+      h('h3.mono', { style: 'font-size:16px;font-weight:var(--w-body)' }, e.profile),
       h('span.mono.mut', plural(Math.max(1, e.waiters || 0), 'request')),
       h('span.right', tag)),
-    h('p', { style: 'font-size:16px;font-weight:600;max-width:72ch', title: !e.claimed && e.wait_reason ? 'The scheduler says: ' + e.wait_reason : null }, head),
+    h('p', { style: 'font-size:16px;max-width:72ch', title: !e.claimed && e.wait_reason ? 'The scheduler says: ' + e.wait_reason : null }, head),
     h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
-      h('div', { style: 'display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 16px;font-size:13px;font-weight:600' },
+      h('div', { style: 'display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 16px;font-size:13px' },
         h('span', 'Waited ', h('time', { title: 'Queued ' + clock(e.created) }, dur(Math.round(waited)))),
         limitS ? h('span.mut', e.claimed ? 'Claimed: the time limit is paused' : `Gives up after ${dur(limitS)} without a claim`)
           : null),
@@ -107,10 +107,10 @@ function loadingCard(st, inst) {
   const stalled = load.stalled_s != null;
   return h('article', { key: 'l-' + inst.profile, style: 'display:flex;flex-direction:column;gap:14px;padding:18px 20px;border-top:1px solid var(--line)' },
     h('div.row', { style: 'align-items:baseline;gap:6px 14px' },
-      h('h3.mono', { style: 'font-size:16px;font-weight:500' }, inst.profile),
+      h('h3.mono', { style: 'font-size:16px;font-weight:var(--w-body)' }, inst.profile),
       h('span.mono.mut', plural(inst.waiters, 'request')),
       h('span.right', stalled ? badge('Load stalled', 'fail') : badge('Model loading', 'load'))),
-    h('p', { style: 'font-size:16px;font-weight:600;max-width:72ch' },
+    h('p', { style: 'font-size:16px;max-width:72ch' },
       stalled ? `The model is loading, but no new bytes have arrived for ${dur(Math.round(load.stalled_s))}.`
         : eta != null ? `The model is still loading. About ${dur(eta < 90 ? Math.round(eta) : Math.round(eta / 60) * 60)} left.` : 'The model is still loading.'),
     h('div.why',
@@ -192,7 +192,7 @@ registerView({
                   { label: 'When', cls: 'tight', render: e => ago(e.ts) },
                   { label: 'Profile', render: e => h('span.mono.nowrap', e.profile || '–') },
                   { label: 'Requests', cls: 'r', render: e => num(((e.data || {}).waiters || 1) + ((e.data || {}).suppressed_since_last || 0)) },
-                  { label: 'Why', render: e => { const d = e.data || {}; return h('span', { title: d.message ? 'The scheduler says: ' + d.message : null }, h('span', { style: 'font-weight:700' }, refusalWord(d.reason) + '.'), d.message ? h('span.sub', plainReason(d.message)) : null); } },
+                  { label: 'Why', render: e => { const d = e.data || {}; return h('span', { title: d.message ? 'The scheduler says: ' + d.message : null }, h('span', { style: 'font-weight:var(--w-strong)' }, refusalWord(d.reason) + '.'), d.message ? h('span.sub', plainReason(d.message)) : null); } },
                 ],
                 empty: empty(historyOn ? 'No request was turned away' : 'History is off',
                   historyOn ? 'Requests that cannot be served (the model does not fit, a node is missing, the time limit passed) are listed here.'
@@ -207,7 +207,7 @@ registerView({
             h('section.card',
               h('div.ch', h('h2', 'Held back after a failure')),
               (st.backoffs || []).length || (st.quarantines || []).length ? [
-                (st.backoffs || []).map(b => h('div.bl', h('span.mono', { style: 'font-weight:500' }, b.profile), badge(plural(b.level, 'failure'), 'aside'),
+                (st.backoffs || []).map(b => h('div.bl', h('span.mono', { style: 'font-weight:var(--w-body)' }, b.profile), badge(plural(b.level, 'failure'), 'aside'),
                   h('span.mut', { style: 'font-size:13px' }, 'Its last load failed. New requests for it are refused until ', at(b.until), ' (', until(b.until), ').'))),
                 (st.quarantines || []).map(q => h('div.bl', h('span', nodeChip(nodeName(st, q.node))), badge(plural(q.level, 'failed check'), 'aside'),
                   h('span.mut', { style: 'font-size:13px' }, 'Set aside until ', at(q.until), ' (', until(q.until), '). Other nodes are used meanwhile.'))),
