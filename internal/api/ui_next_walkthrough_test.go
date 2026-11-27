@@ -219,7 +219,7 @@ func TestUINextWeightTokens(t *testing.T) {
 			continue
 		}
 		for _, m := range weight.FindAllStringSubmatch(r.body, -1) {
-			v := strings.TrimSpace(m[1])
+			v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(m[1]), "!important"))
 			if v == "inherit" { // a bold word inside a heading keeps the heading's weight
 				continue
 			}

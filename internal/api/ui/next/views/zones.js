@@ -827,7 +827,7 @@ registerView({
           const x = zoneOfId(a.id);
           const z = x ? x.z : { square: 'down', label: a.state === 'lost' ? 'Offline' : 'Set aside', rest: null };
           return h('div.pf.attn', { key: 'attn-' + a.id, 'data-attn': a.id, role: 'button', tabindex: '0', onclick: () => pickZone(a.id), onkeydown: e => { if (e.key === 'Enter') pickZone(a.id); } },
-            h('span.mono', { style: 'font-weight:var(--w-body)' }, a.name || (x && x.name) || a.id),
+            h('span.mono', a.name || (x && x.name) || a.id),
             h('span.sts', h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }), h('span.stx', z.label, z.rest)),
             h('span.chev', icon('M8 5l5 5-5 5', 15)));
         }) : h('div.pf.none', { key: 'attn-none' }, h('span.mut', 'Nothing needs a look: every zone of it is reachable.')),
@@ -836,7 +836,7 @@ registerView({
           const inst = ((state.status || {}).instances || []).find(i => i.profile === m.profile);
           const dr = isDraining(inst);
           return h('div.pf', { key: 'm-' + m.profile, 'data-model': m.profile },
-            h('span', h('span.mono', { style: 'font-weight:var(--w-body)', title: m.profile }, modelName(m.profile)),
+            h('span', h('span.mono', { title: m.profile }, modelName(m.profile)),
               dr ? h('span.mut', { style: 'font-size:12px', 'data-draining': '' }, ' · unloads when its requests end, ' + drainText(inst)) : null),
             h('span', { style: 'text-align:right' }, plural(m.zones || 0, 'zone')),
             dr ? button('Cancel unload', () => undrainAsk(m.profile), 'sm', { 'data-undrain': m.profile, style: 'justify-content:center', title: 'Take the unload back: it takes requests again' })
@@ -986,7 +986,7 @@ registerView({
         if (pins.length) parts.push(h('span', { 'data-pinned': '', title: 'Loaded on chosen zones: ' + pins.map(nameOfId).join(', ') + '. Its next ordinary load is placed as its profile says.' }, 'on chosen zones'));
         const dr = isDraining(inst);
         loaded = h('div.zl', { key: 'loaded' },
-          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:var(--w-body)', title: inst.profile }, modelName(inst.profile)),
+          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px', title: inst.profile }, modelName(inst.profile)),
             h('div.mut', parts.map((p, i) => [i ? ' · ' : '', p])),
             dr ? h('div', { 'data-draining': '', style: 'font-size:12px' }, 'Unloads when its requests end, ' + drainText(inst) + '. New requests wait in the queue.') : null),
           dr ? button('Cancel unload', () => undrainAsk(inst.profile), '', { 'data-zp': 'undrain', title: 'Take the unload back: it takes requests again' }) : null,

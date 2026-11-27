@@ -85,7 +85,7 @@ function entryCard(st, e, limitS) {
   if (backoff) why.push(['x', ['A load of this profile failed; new requests for it are refused until ', at(backoff.until)], badge(dur(Math.max(0, (toMs(backoff.until) - now()) / 1000)), 'aside')]);
   return h('article', { key: 'q-' + e.profile + '-' + e.created, style: 'display:flex;flex-direction:column;gap:14px;padding:18px 20px;border-top:1px solid var(--line)' },
     h('div.row', { style: 'align-items:baseline;gap:6px 14px' },
-      h('h3.mono', { style: 'font-size:16px;font-weight:var(--w-body)' }, e.profile),
+      h('h3.mono', { style: 'font-size:16px' }, e.profile),
       h('span.mono.mut', plural(Math.max(1, e.waiters || 0), 'request')),
       h('span.right', tag)),
     h('p', { style: 'font-size:16px;max-width:72ch', title: !e.claimed && e.wait_reason ? 'The scheduler says: ' + e.wait_reason : null }, head),
@@ -107,7 +107,7 @@ function loadingCard(st, inst) {
   const stalled = load.stalled_s != null;
   return h('article', { key: 'l-' + inst.profile, style: 'display:flex;flex-direction:column;gap:14px;padding:18px 20px;border-top:1px solid var(--line)' },
     h('div.row', { style: 'align-items:baseline;gap:6px 14px' },
-      h('h3.mono', { style: 'font-size:16px;font-weight:var(--w-body)' }, inst.profile),
+      h('h3.mono', { style: 'font-size:16px' }, inst.profile),
       h('span.mono.mut', plural(inst.waiters, 'request')),
       h('span.right', stalled ? badge('Load stalled', 'fail') : badge('Model loading', 'load'))),
     h('p', { style: 'font-size:16px;max-width:72ch' },
@@ -207,7 +207,7 @@ registerView({
             h('section.card',
               h('div.ch', h('h2', 'Held back after a failure')),
               (st.backoffs || []).length || (st.quarantines || []).length ? [
-                (st.backoffs || []).map(b => h('div.bl', h('span.mono', { style: 'font-weight:var(--w-body)' }, b.profile), badge(plural(b.level, 'failure'), 'aside'),
+                (st.backoffs || []).map(b => h('div.bl', h('span.mono', b.profile), badge(plural(b.level, 'failure'), 'aside'),
                   h('span.mut', { style: 'font-size:13px' }, 'Its last load failed. New requests for it are refused until ', at(b.until), ' (', until(b.until), ').'))),
                 (st.quarantines || []).map(q => h('div.bl', h('span', nodeChip(nodeName(st, q.node))), badge(plural(q.level, 'failed check'), 'aside'),
                   h('span.mut', { style: 'font-size:13px' }, 'Set aside until ', at(q.until), ' (', until(q.until), '). Other nodes are used meanwhile.'))),

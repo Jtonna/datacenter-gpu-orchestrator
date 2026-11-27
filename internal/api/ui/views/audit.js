@@ -261,7 +261,7 @@ registerView({
       else body = table({
         minWidth: 820, rows: revs, key: r => r.revision, onRow: r => showRevision(r.revision),
         columns: [
-          { label: 'Revision', cls: 'tight', render: r => h('span', h('span.mono', { style: 'font-weight:var(--w-body)' }, String(r.revision)), r.revision === current ? [' ', badge('Current', 'ready')] : null) },
+          { label: 'Revision', cls: 'tight', render: r => h('span', h('span.mono', String(r.revision)), r.revision === current ? [' ', badge('Current', 'ready')] : null) },
           { label: 'When', cls: 'tight', render: r => ago(r.ts) },
           { label: 'Source', cls: 'tight', render: r => sourceBadge(r.source) },
           { label: 'Who', cls: 'tight', render: r => r.actor || 'anonymous' },

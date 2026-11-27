@@ -232,7 +232,7 @@ function configCard(m, st, showGenerated, toggleGenerated, reload) {
     table({
       rows, key: p => p.id, minWidth: 900,
       columns: [
-        { label: 'Profile', render: p => h('span', h('span.mono.nowrap', { style: 'font-weight:var(--w-body)' }, p.id), loaded.has(p.id) ? [' ', badge('Loaded', 'ready')] : null,
+        { label: 'Profile', render: p => h('span', h('span.mono.nowrap', p.id), loaded.has(p.id) ? [' ', badge('Loaded', 'ready')] : null,
           (p.aliases || []).length ? h('span.sub', 'also ' + p.aliases.join(', ')) : null) },
         { label: 'Made', cls: 'tight', render: p => (p.generated ? h('span.quiet', { title: 'An auto-generated benchmark configuration' }, 'Generated') : 'By hand') },
         { label: 'Context', cls: 'r', render: p => ctx(p.ctx) },
