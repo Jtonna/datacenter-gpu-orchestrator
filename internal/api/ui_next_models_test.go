@@ -57,7 +57,7 @@ func TestUINextModels(t *testing.T) {
 			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "Pinned", "Delete model",
 				"Loaded now", "on ps5-01, ps5-02", "2 requests in flight", "Runs on", "gemma-4-27b", "Google",
 				"Configurations", "2 profiles", "Profile", "Context", "Memory needed", "8,192", "32,768", "17,480 MiB", "20,890 MiB", "measured",
-				"1 test profile", "Add profile", "Open the model page"},
+				"1 test profile", "Add profile", "Open the model's page"},
 			"pageHas": []string{"aside.side tr[data-profile='gemma-4-27b'] span.mdl-pill", "aside.side tr[data-profile='gemma-4-27b'] button.go[data-act=edit]",
 				"aside.side a.btn[href='#/profiles/new']", "aside.side select.fs[aria-label=Context]", "aside.side label.sx",
 				"aside.side button.btn[data-act=pin][aria-pressed=true]", off("aside.side button.btn.red[data-act=delete]", "Deleting")},

@@ -38,7 +38,7 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus, profileLabel } from '../core/ui.js';
+import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, factGrid, badge, filterSelect, dialog, runStatus, profileLabel } from '../core/ui.js';
 import { num, gb, tps, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
 import { staleBanner, nodeName, nodeMemory, machines, shortReason, plainReason } from '../core/status.js';
 import { loadConfig, loadSchema, fieldsOf, clone } from '../core/configdata.js';
@@ -48,9 +48,8 @@ import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
 import { stateBadge, fitOf, cannotRun, runsOnCell, testRun } from './models/common.js';
 import { mountDetail } from './models/detail.js';
-import { splitProfiles, prodText, testText, prodNeeds, profName, needBasis, zonesFor } from './models/kinds.js';
+import { splitProfiles, prodText, testText, prodNeeds, profName, needBasis, zonesFor, restorePoints } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
-import { standardDialog } from './models/standard.js';
 
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
 export const NOT_YET = {
@@ -279,55 +278,48 @@ function deleteButton(m, disk, onDeleted) {
   return h('button.btn.red', { type: 'button', 'data-act': 'delete', onclick: () => deleteModel(m, onDeleted, disk ? disk.models_writable : undefined) }, 'Delete model');
 }
 
-// needsLine(m, st, f) -> the panel's "Runs on: 1 to 2 PS5s · needs ~3.3 to
-// 5.1 GB" and under it the profile at each end, measured or estimated each;
-// with no production profile, the lightest figure marked "smallest test
-// configuration"
+// needsLine(m, st, f) -> the panel's "Runs on 1 to 2 zones · needs ~3.3 to
+// 5.1 GB"; the profile at each end is on hover only (the table below lists
+// the profiles: the owner's walkthrough, build-92 W1); with no production
+// profile, the lightest figure marked "smallest test configuration"
 function needsLine(m, st, f) {
   const r = prodNeeds(m);
   if (r) {
     return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnRange(m, st, r) || runsOnCell(m, st),
-      h('span.mut', ' · needs '), h('span', needRange(r)), h('span.mut.mdl-need-ends', needEnds(r)));
+      h('span.mut', ' · needs '), h('span', { title: needEnds(r) }, needRange(r)));
   }
   const tail = [f.sub, noProd(m) ? 'smallest test configuration' : ''].filter(Boolean).join(' · ');
   return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnCell(m, st),
     f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), tail ? h('span.mut', ' (' + tail + ')') : null] : null);
 }
 
-// convMemory(m) -> the panel's "Conversation memory" line: for a recurrent
-// or windowed family, the restore points (context checkpoints) the model
-// keeps on the machine that hosts it, from its profiles' host_memory (GET
-// /api/profiles; scheduler hostmem.go), and whether what it needs counts
-// them (count_host_memory, a host on a node); nothing for a plain family
-//
-// p33: a profile may set its own --ctx-checkpoints / --cache-ram in its
-// extra arguments; each figure says where it comes from (checkpoints_from:
-// "from this profile's extra arguments" or "the cluster default"), and
-// profiles of one file with different figures are listed by group.
+// convMemory(m) -> the panel's "Conversation memory" line, ONE short line
+// that never lists profiles (the owner's walkthrough, build-92 W1): for a
+// recurrent or windowed family, the size of one restore point (context
+// checkpoint) the model keeps on the hosting machine, the cluster's default
+// number with its size, how many profiles set their own (their figure is the
+// Configurations table's "Restore points" column and their own panel), and
+// whether what it needs counts them (GET /api/profiles host_memory;
+// scheduler hostmem.go). Nothing for a plain family.
 function convMemory(m) {
-  const withHM = (m.profiles || []).filter(p => { const x = p.host_memory; return x && x.family && x.family !== 'plain' && (x.checkpoints > 0 || x.checkpoints_from); });
-  const hm = (withHM.find(p => p.host_memory.checkpoints > 0) || {}).host_memory;
+  const all = (m.profiles || []).filter(p => restorePoints(p));
+  const prod = splitProfiles(all).prod;
+  const withHM = prod.length ? prod : all;
+  const hm = (withHM.find(p => p.host_memory.checkpoints > 0) || all.find(p => p.host_memory.checkpoints > 0) || {}).host_memory;
   if (!hm) return null;
-  // one group per distinct (restore points, MB, source)
-  const groups = [];
-  for (const p of withHM) {
-    const x = p.host_memory;
-    const k = [x.checkpoints, x.checkpoints_mib, x.checkpoints_from || ''].join('|');
-    let g = groups.find(y => y.k === k);
-    if (!g) groups.push(g = { k, x, ids: [] });
-    g.ids.push(p.id);
-  }
-  const fig = x => `up to ${num(x.checkpoints)} (${num(x.checkpoints_mib)} MB${x.checkpoints_from ? '; ' + x.checkpoints_from : ''})`;
-  const lead = 'Conversation memory: this model keeps restore points on the machine that hosts it: ';
+  const head = h('span.mut', 'Conversation memory: ');
   // a window model whose size the header does not tell: no number until a load's log gives it
-  if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load.');
-  // a size read from a load's log names the file and the context it was read at
+  if (hm.size_unknown) return h('div', { 'data-convmem': 'unknown' }, head, 'restore points on the hosting machine; their size is not known yet: read at the first load.');
   const mb = num(Math.round(hm.cell_mib));
-  const each = hm.from_log ? `${mb} MB each as the server logged it at a load of ${hm.logged_file} at ctx ${num(hm.logged_ctx)}`
-    : hm.estimate ? `at most ${mb} MB each` : `about ${mb} MB each`;
-  return h('div.mut', { 'data-convmem': hm.from_log ? 'logged' : '', title: hm.from_log ? `Read from the model server's log this run (file of ${num(hm.logged_file_bytes)} bytes); kept until a restart` : null },
-    lead + each + (groups.length > 1 ? '; by profile: ' + groups.map(g => fig(g.x) + ' for ' + g.ids.join(', ')).join('; ') : ', ' + fig(hm)) +
-      (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
+  const parts = [hm.from_log ? `${mb} MB per restore point on the hosting machine, as logged at a load at ctx ${num(hm.logged_ctx)}`
+    : `${hm.estimate ? 'at most' : 'about'} ${mb} MB per restore point on the hosting machine`];
+  const own = withHM.filter(p => restorePoints(p).own);
+  const base = (withHM.find(p => !restorePoints(p).own) || {}).host_memory;
+  if (base) parts.push(`${/default/.test(base.checkpoints_from || '') ? 'default' : 'up to'} ${num(base.checkpoints)} (${num(Math.round(base.checkpoints_mib || 0))} MB)`);
+  if (own.length) parts.push(base ? `${plural(own.length, 'profile')} ${own.length === 1 ? 'sets its' : 'set their'} own` : 'each profile sets its own');
+  parts.push(hm.counted ? 'counted in what it needs' : 'not yet counted in what it needs');
+  return h('div', { 'data-convmem': hm.from_log ? 'logged' : '', title: hm.from_log ? `Read from the model server's log at a load of ${hm.logged_file} (file of ${num(hm.logged_file_bytes)} bytes); kept until a restart` : null },
+    head, parts.join(' · ') + '.');
 }
 
 // the side panel of one model
@@ -345,12 +337,16 @@ function modelPanel(st, m, ps) {
   const q = ps.q.trim().toLowerCase();
   // "Unload when idle" from ttl_s (v60; 0 = never); no column when the server has no ttl_s
   const ttlCol = hand.some(p => typeof p.ttl_s === 'number');
+  // "Restore points" for a model that keeps them (a recurrent or windowed family)
+  const rpCol = hand.some(p => restorePoints(p));
   const rows = hand.filter(p => (!q || p.id.toLowerCase().includes(q) || profileLabel(p).toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)) && (!ps.ctx || String(p.ctx) === ps.ctx));
   if (ps.view === 'bench') return benchView(m, ps);
   if (ps.view === 'edit') return editView(m, ps);
   return [
     ps.saved ? h('div.banner.info', { key: 'saved', role: 'status', 'data-saved': '' }, h('span.grow', ps.saved)) : null,
     h('div.mdl-acts', { key: 'acts' },
+      // the model's own page first: the full picture is there (build-92 W1)
+      h('a.btn', { href: href('models', [m.key]), 'data-act': 'page' }, "Open the model's page"),
       // the count opens the model's runs in this panel (the owner's note 8a); it
       // is the count of that list, from the same query (runsOf), so the two
       // never differ; "report" is said per row only (the reviewer, 25 Nov)
@@ -366,25 +362,28 @@ function modelPanel(st, m, ps) {
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
       needsLine(m, st, f),
       convMemory(m),
-      facts([
+      // the six facts in a quiet two-column grid: muted labels, values at the body weight (build-92 W1)
+      factGrid([
         m.family ? ['Family', h('span', m.family)] : null,
         m.parameters ? ['Parameters', h('span', m.parameters)] : null,
         m.quant ? ['Quantization', h('span', m.quant)] : null,
-        m.context_length ? ['Trained context', h('span', num(m.context_length)), 'The context the model was trained with, from its file'] : null,
-        m.requests_served != null ? ['Requests served', h('span', num(m.requests_served))] : null,
-        l.count ? ['Loads', h('span', num(l.count), l.failed ? h('span.err-t', ` · ${num(l.failed)} failed`) : null)] : null,
-      ].filter(Boolean))),
+        m.context_length ? ['Trained context', h('span.mono', num(m.context_length)), 'The context the model was trained with, from its file'] : null,
+        m.requests_served != null ? ['Requests served', h('span.mono', num(m.requests_served))] : null,
+        l.count ? ['Loads', h('span', h('span.mono', num(l.count)), l.failed ? h('span.err-t', ` · ${num(l.failed)} failed`) : null)] : null,
+      ])),
     h('section.mdl-cfg', { key: 'cfg' },
       h('div.dh', h('h3', 'Configurations ', h('span.mut', prodText(hand.length))),
         h('div.mdl-cfg-tools',
           hand.length > 1 ? searchField(ps.q, v => { ps.q = v; ps.redraw(); }, 'Search profiles', 'mdl-psearch') : null,
           ctxs.length > 1 ? filterSelect('Context', [{ id: '', label: 'any' }].concat(ctxs.map(c => ({ id: String(c), label: num(c) }))), ps.ctx, v => { ps.ctx = v; ps.redraw(); }) : null,
-          standardButton(m, ps),
+          // "Make standard profiles" is on the model's page now (build-92 W1)
           h('a.btn.sm', { href: href('profiles', ['new']), title: 'Open the profile editor' }, 'Add profile'))),
-      hand.length ? (rows.length ? h('div.scroll.mdl-pscroll', h('table.tbl.mdl-ptbl',
+      // the table grows with the panel: ONE scroll container, the panel body (build-92 W1)
+      hand.length ? (rows.length ? h('div.mdl-ptwrap', h('table.tbl.mdl-ptbl',
         h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'),
           h('th.r', { scope: 'col', title: 'What a load of this profile needs: measured, or estimated from the file' }, 'Memory needed'),
           ttlCol ? h('th.r', { scope: 'col', title: 'How long the model stays loaded with no request (the ttl of the profile, else the default)' }, 'Unload when idle') : null,
+          rpCol ? h('th.r', { scope: 'col', title: 'Restore points (context checkpoints) kept on the hosting machine; "own": set in the profile\'s extra arguments' }, 'Restore points') : null,
           h('th', { scope: 'col' }, h('span.sr', 'Edit')))),
         h('tbody', rows.map(profileRow))))
         : h('p.mut.mdl-pad', 'No profile matches.'))
@@ -392,7 +391,6 @@ function modelPanel(st, m, ps) {
       // the test profiles: one collapsed line to the Test profiles page, never counted as profiles
       tests.length ? h('p.mdl-tests.mdl-pad', { key: 'tests', 'data-tests': String(tests.length) },
         h('a', { href: href('test-profiles', [], { model: m.file || m.key }), title: 'On the Test profiles page, out of the way' }, (hand.length ? 'and ' : '') + testText(tests.length))) : null),
-    h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page')),
   ];
   // one profile's row (production table and the test list)
   function profileRow(p) {
@@ -402,16 +400,18 @@ function modelPanel(st, m, ps) {
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
           h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, needBasis(p))] : h('span.mut', DASH)),
           ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
+          rpCol ? rpCell(p) : null,
           h('td.r', h('button.go', { type: 'button', 'data-act': 'edit', 'aria-label': 'Edit ' + p.id, title: 'Edit it here', onclick: () => ps.edit(p.id) }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
   }
 }
 
-// standardButton(m, ps) -> "Make standard profiles": the dialog of
-// views/models/standard.js (a llama model whose file is there)
-function standardButton(m, ps) {
-  if (m.kind === 'command' || m.exists === false) return null;
-  return h('button.btn.sm', { type: 'button', 'data-act': 'standard', title: 'Plan 16k, 32k, 64k and up to the trained context, then write the ones that fit',
-    onclick: () => standardDialog(m, text => { ps.saved = text; ps.redraw(); }) }, 'Make standard profiles');
+// rpCell(p) -> the "Restore points" cell: the number, "own" beside it when
+// the profile sets it in its extra arguments; a dash for a profile without
+export function rpCell(p) {
+  const r = restorePoints(p);
+  if (!r) return h('td.r.mut', DASH);
+  return h('td.r', { 'data-restore-points': String(r.n), 'data-own': r.own ? '' : null, title: r.mib != null ? num(Math.round(r.mib)) + ' MB on the hosting machine' : null },
+    h('span.mono', num(r.n)), r.own ? h('span.mut', ' own') : null);
 }
 
 // backBar(m, ps) -> the way back to the panel's main view

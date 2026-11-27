@@ -35,7 +35,8 @@ func TestUINextModelsWrittenNeedWhenRejected(t *testing.T) {
 			"text": map[string]any{"div.mr[data-model='command:image-gen'] span.mdl-needs": "~5.3 GB", "div.mr[data-model=tied-4b] span.mdl-needs": "~3.1 GB"},
 			"has":  []string{"span.mdl-needs[data-col=needs] span.mut"}}, // gamma: nobody knows its need
 		map[string]any{"name": "models: the panel of the tied file", "route": "#/models?model=tied-4b", "status": ovStatus(now), "width": 1536,
-			"page": []string{"needs ~3.1 GB", "(set by hand)", "host-1 is excluded"}},
+			// how the need is known: in the Configurations table (the line of profiles under "Runs on" is gone, build-92 W1)
+			"page": []string{"needs ~3.1 GB", "set by hand", "host-1 is excluded"}, "pageNone": []string{"aside.side .mdl-need-ends"}},
 		map[string]any{"name": "models: the panel of the program", "route": "#/models?model=command:image-gen", "status": ovStatus(now), "width": 1536,
 			"page": []string{"needs ~5.3 GB", "set by hand", "Runs only on host-1, which is excluded"}},
 	}})

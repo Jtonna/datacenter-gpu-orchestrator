@@ -265,3 +265,64 @@ func TestUINextWeightTokens(t *testing.T) {
 		})
 	}
 }
+
+// W1: the model's side panel, toned down (the owner's walkthrough, build-92;
+// board walkthrough-fixes frame 1). One scroll container (the panel body);
+// "Open the model's page" first; the conversation memory in one line that
+// names no profile; no line of profiles under "Runs on"; the six facts in
+// the quiet grid; the per-profile restore points in a column of the panel's
+// and the page's Configurations tables (a profile with its own
+// --ctx-checkpoints: its number, "own" beside it); "Make standard profiles"
+// on the model's page, not in the panel.
+func TestUINextModelPanelToneDown(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	cluster := map[string]any{"family": "recurrent", "cell_mib": 50.25, "checkpoints": 32, "checkpoints_mib": 1608, "prompt_cache_mib": 0, "on_node": false, "counted": true,
+		"per_slot": 32, "checkpoints_from": "the cluster default", "prompt_cache_from": "the cluster default"}
+	own := map[string]any{"family": "recurrent", "cell_mib": 50.25, "checkpoints": 3, "checkpoints_mib": 151, "prompt_cache_mib": 0, "on_node": false, "counted": true,
+		"per_slot": 3, "checkpoints_from": "from this profile's extra arguments", "prompt_cache_from": "from this profile's extra arguments"}
+	mixed := withHostMemory(t, fetch["/api/models"], mdlLoaded, cluster).(map[string]any)
+	var first string
+	var ids []string
+	for _, m := range jlist(mixed["models"]) {
+		if mm := jmap(m); jstr(mm["key"]) == mdlLoaded {
+			ps := jlist(mm["profiles"])
+			jmap(ps[0])["host_memory"] = own
+			first = jstr(jmap(ps[0])["id"])
+			for _, p := range ps {
+				ids = append(ids, jstr(jmap(p)["id"]))
+			}
+		}
+	}
+	f := map[string]any{}
+	for k, v := range fetch {
+		f[k] = v
+	}
+	f["/api/models"] = mixed
+	// the conversation line and the needs line name no profile
+	var noIDs []string
+	for _, id := range ids {
+		noIDs = append(noIDs, `Conversation memory:[^\n.]*`+regexp.QuoteMeta(id))
+	}
+	panel := "#/models?model=" + mdlLoaded
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": f, "cases": []any{
+		map[string]any{"name": "W1: one scroll container, the panel body", "route": panel, "status": st,
+			"pageHas":  []string{"aside.side .side-body table.mdl-ptbl", "aside.side .mdl-ptwrap table.mdl-ptbl"},
+			"pageNone": []string{"aside.side .side-body .scroll", "aside.side .mdl-pscroll"}},
+		map[string]any{"name": "W1: the conversation line is one line and names no profile", "route": panel, "status": st,
+			"page":        []string{"Conversation memory: about 50 MB per restore point on the hosting machine · default 32 (1,608 MB) · 1 profile sets its own · counted in what it needs."},
+			"notOnPageRe": noIDs, "pageCount": map[string]any{"aside.side [data-convmem]": 1}},
+		map[string]any{"name": "W1: no line of profiles under Runs on", "route": panel, "status": st,
+			"pageHas": []string{"aside.side [data-needs]"}, "pageNone": []string{"aside.side .mdl-need-ends"}},
+		map[string]any{"name": "W1: the facts in the quiet grid", "route": panel, "status": st,
+			"pageHas": []string{"aside.side dl.factgrid dt", "aside.side dl.factgrid dd"}, "pageNone": []string{"aside.side dl.facts"}},
+		map[string]any{"name": "W1: Open the model's page first, no Make standard profiles in the panel", "route": panel, "status": st,
+			"pageHas":  []string{"aside.side .mdl-acts a.btn[data-act=page][href='#/models/" + mdlLoaded + "']"},
+			"pageSeq":  map[string]any{"aside.side .mdl-acts [data-act]": []string{"Open the model's page", "Benchmarks", "Pinned", "Delete model"}},
+			"pageNone": []string{"aside.side [data-act=standard]"}, "notOnPage": []string{"Open the model page"}},
+		map[string]any{"name": "W1: the panel's Restore points column", "route": panel, "status": st,
+			"pageHas": []string{"aside.side th.r[title^=Restore]", "aside.side tr[data-profile='" + first + "'] td[data-restore-points='3'][data-own]"}},
+		map[string]any{"name": "W1: the page's Restore points column and Make standard profiles", "route": "#/models/" + mdlLoaded, "status": st,
+			"has": []string{"[data-restore-points='3'][data-own]", "button[data-act=standard]"}},
+	}})
+}

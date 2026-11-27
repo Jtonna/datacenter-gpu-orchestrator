@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 )
 
@@ -31,9 +32,9 @@ func withHostMemory(t *testing.T, models any, key string, hm map[string]any) any
 	return out
 }
 
-// The Models panel says, for a recurrent or windowed family, what the
-// model keeps on the machine that hosts it, and whether what it needs
-// counts it; nothing for a plain family. The plan's memory table names the
+// The Models panel says, for a recurrent or windowed family, in ONE short
+// line (build-92 W1), what the model keeps on the hosting machine, and
+// whether what it needs counts it; nothing for a plain family. The plan's memory table names the
 // term inside the context column when it is counted.
 func TestUIHostMemoryLine(t *testing.T) {
 	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
@@ -58,25 +59,26 @@ func TestUIHostMemoryLine(t *testing.T) {
 		f["/api/models"] = withHostMemory(t, fetch["/api/models"], mdlLoaded, hm)
 		return f
 	}
-	const line = "Conversation memory: this model keeps restore points on the machine that hosts it: about 50 MB each, up to 32 (1,608 MB)"
+	const line = "Conversation memory: about 50 MB per restore point on the hosting machine · up to 32 (1,608 MB)"
 	// one run per answer: the app keeps the catalog it fetched first
 	for _, c := range []struct {
 		hm   map[string]any
 		want map[string]any
 	}{
-		{rec, map[string]any{"name": "host memory: not yet counted", "page": []string{line + ", not yet counted."}, "pageHas": []string{"[data-convmem]"}}},
-		{counted, map[string]any{"name": "host memory: counted", "page": []string{line + ", counted in what it needs."}}},
+		{rec, map[string]any{"name": "host memory: not yet counted", "page": []string{line + " · not yet counted in what it needs."}, "pageHas": []string{"[data-convmem]"}}},
+		{counted, map[string]any{"name": "host memory: counted", "page": []string{line + " · counted in what it needs."}}},
 		{plain, map[string]any{"name": "host memory: nothing for a plain family", "pageNone": []string{"[data-convmem]"}, "notOnPage": []string{"Conversation memory"}}},
 		{unknown, map[string]any{"name": "host memory: a window size not yet known shows no number",
-			"page":      []string{"Conversation memory: this model keeps restore points on the machine that hosts it: size not yet known: read at the first load."},
+			"page":      []string{"Conversation memory: restore points on the hosting machine; their size is not known yet: read at the first load."},
 			"notOnPage": []string{" MB each", "(0 MB)"}}},
 		{window, map[string]any{"name": "host memory: a proven window model (Gemma 4 12B) says at most",
-			"page": []string{"Conversation memory: this model keeps restore points on the machine that hosts it: at most 320 MB each, up to 32 (10,240 MB), not yet counted."}}},
+			"page": []string{"Conversation memory: at most 320 MB per restore point on the hosting machine · up to 32 (10,240 MB) · not yet counted in what it needs."}}},
 		{madeUp, map[string]any{"name": "host memory: an architecture without an exact rule shows no number",
-			"page":      []string{"Conversation memory: this model keeps restore points on the machine that hosts it: size not yet known: read at the first load."},
+			"page":      []string{"Conversation memory: restore points on the hosting machine; their size is not known yet: read at the first load."},
 			"notOnPage": []string{" MB each", "(0 MB)"}}},
 		{logged, map[string]any{"name": "host memory: a size read from a load's log says which file and context",
-			"page": []string{"Conversation memory: this model keeps restore points on the machine that hosts it: 43 MB each as the server logged it at a load of gemma-x.gguf at ctx 8,192, up to 32 (1,360 MB), not yet counted."}}},
+			"page": []string{"Conversation memory: 43 MB per restore point on the hosting machine, as logged at a load at ctx 8,192 · up to 32 (1,360 MB) · not yet counted in what it needs."},
+			"titles": []string{"at a load of gemma-x.gguf"}}},
 	} {
 		f := with(c.hm)
 		c.want["route"], c.want["status"] = "#/models?model="+mdlLoaded, st
@@ -84,8 +86,10 @@ func TestUIHostMemoryLine(t *testing.T) {
 	}
 }
 
-// p33: the Models panel names where the figures come from, and lists the
-// profiles of one file by group when their own extra arguments differ.
+// p33: the Models panel names where the figures come from; a profile with
+// its own extra arguments is counted in the one line ("1 profile sets its
+// own"), never named there: its number is the Configurations table's
+// "Restore points" column, "own" beside it (build-92 W1).
 func TestUIHostMemorySources(t *testing.T) {
 	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
 	st := fetch["/api/status"]
@@ -93,7 +97,7 @@ func TestUIHostMemorySources(t *testing.T) {
 		"per_slot": 32, "checkpoints_from": "the cluster default", "prompt_cache_from": "the cluster default"}
 	own := map[string]any{"family": "recurrent", "cell_mib": 50.25, "checkpoints": 3, "checkpoints_mib": 151, "prompt_cache_mib": 0, "on_node": false, "counted": true,
 		"per_slot": 3, "checkpoints_from": "from this profile's extra arguments", "prompt_cache_from": "from this profile's extra arguments"}
-	const lead = "Conversation memory: this model keeps restore points on the machine that hosts it: about 50 MB each"
+	const lead = "Conversation memory: about 50 MB per restore point on the hosting machine"
 	all := map[string]any{}
 	for k, v := range fetch {
 		all[k] = v
@@ -101,7 +105,7 @@ func TestUIHostMemorySources(t *testing.T) {
 	all["/api/models"] = withHostMemory(t, fetch["/api/models"], mdlLoaded, cluster)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": all, "cases": []any{map[string]any{"name": "host memory: one source",
 		"route": "#/models?model=" + mdlLoaded, "status": st,
-		"page": []string{lead + ", up to 32 (1,608 MB; the cluster default), counted in what it needs."}}}})
+		"page": []string{lead + " · default 32 (1,608 MB) · counted in what it needs."}}}})
 
 	// the first profile carries its own flags, the rest the cluster default
 	mixed := withHostMemory(t, fetch["/api/models"], mdlLoaded, cluster).(map[string]any)
@@ -119,8 +123,11 @@ func TestUIHostMemorySources(t *testing.T) {
 	all["/api/models"] = mixed
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": all, "cases": []any{map[string]any{"name": "host memory: by profile",
 		"route": "#/models?model=" + mdlLoaded, "status": st,
-		"page": []string{lead + "; by profile: ", "up to 3 (151 MB; from this profile's extra arguments) for " + first,
-			"up to 32 (1,608 MB; the cluster default) for "}}}})
+		"page":    []string{lead + " · default 32 (1,608 MB) · 1 profile sets its own · counted in what it needs."},
+		// the one line names no profile; the column says each one's number, "own" beside its own
+		"notOnPageRe": []string{"Conversation memory:[^.]*" + regexp.QuoteMeta(first)},
+		"pageHas": []string{"aside.side th.r[title^=Restore]", "aside.side tr[data-profile='" + first + "'] td[data-restore-points='3'][data-own]",
+			"aside.side tr[data-profile]:not([data-profile='" + first + "']) td[data-restore-points='32']"}}}})
 }
 
 // p33: the placement page's Host block shows the scheduler machine's

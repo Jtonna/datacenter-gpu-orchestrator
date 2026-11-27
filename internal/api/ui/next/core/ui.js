@@ -98,6 +98,13 @@ export function facts(pairs) {
   return h('dl.facts', pairs.filter(Boolean).map(([k, v, title]) => [h('dt', k), h('dd', { title }, v)]));
 }
 
+// factGrid([[label, value, title], ...]) -> the quiet two-column fact grid
+// (board walkthrough-fixes, frame 1): muted labels, values at the body
+// weight, one column at phone width. Numbers go in span.mono (400).
+export function factGrid(pairs) {
+  return h('dl.factgrid', pairs.filter(Boolean).map(([k, v, title]) => h('div', { key: 'f-' + k }, h('dt', k), h('dd', { title }, v))));
+}
+
 // backLink('Models', href) -> the way back from a detail page, above its title.
 export const backLink = (label, to) => h('a.back', { href: to }, '\u2190 ' + label);
 

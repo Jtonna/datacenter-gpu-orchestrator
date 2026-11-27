@@ -115,7 +115,7 @@ func TestUINextModelsStandardSet(t *testing.T) {
 		}
 		return f
 	}
-	open := []any{"aside.side button[data-act=standard]"}
+	open := []any{"button[data-act=standard]"}
 	comment := map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "standard set for gemma"}
 	written := map[string]any{"revision": 413, "changed": true, "written": []any{"gemma-4-27b:16k", "gemma-4-27b:64k", "gemma-4-27b:128k", "gemma-4-27b:256k"},
 		"skipped": []any{map[string]any{"id": "gemma-4-27b", "reason": "gemma-4-27b exists at 8k, kept as it is; the standard default would be 32k"}}}
@@ -128,12 +128,12 @@ func TestUINextModelsStandardSet(t *testing.T) {
 			"page":     []string{"1 test profile"},
 			"pageHas":  []string{"aside.side p.mdl-tests[data-tests='1'] a[href^='#/test-profiles?model=']"},
 			"pageNone": []string{"aside.side details.mdl-tests", "aside.side table.mdl-ptbl tr[data-profile=qwen3-14b]"}},
-		map[string]any{"name": "models: the button", "route": "#/models?model=" + mdlLoaded, "status": st,
-			"pageHas": []string{"aside.side button[data-act=standard]"}, "page": []string{"Make standard profiles"}},
-		map[string]any{"name": "standard: checking", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(map[string]any{"$hang": true}, nil),
+		map[string]any{"name": "models: the button", "route": "#/models/" + mdlLoaded, "status": st,
+			"pageHas": []string{"button[data-act=standard]"}, "page": []string{"Make standard profiles"}},
+		map[string]any{"name": "standard: checking", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(map[string]any{"$hang": true}, nil),
 			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=checking]"}, "page": []string{"Planning each context with nothing loaded"}},
 		// A, B, C, D, F, G on the read
-		map[string]any{"name": "standard: ready, the read call's table", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+		map[string]any{"name": "standard: ready, the read call's table", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, nil),
 			"click": open,
 			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=ready]",
 				// A: the name, prefilled from the family
@@ -154,36 +154,36 @@ func TestUINextModelsStandardSet(t *testing.T) {
 				"every zone it may use (4: the setting max_pool)", "the default context", "measured for this shape", "derived from other contexts of this model", "Fits, derived", "Two figures: /api/plan shows 25,384 MiB",
 				"Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b", "every standard context is at or below it"}},
 		// C: a tick changes the count; untick everything and nothing can be written
-		map[string]any{"name": "standard: ticking the estimate row counts it", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+		map[string]any{"name": "standard: ticking the estimate row counts it", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, nil),
 			"click":   append(append([]any{}, open...), tr(":256k")+" input[data-tick]", comment),
 			"pageHas": []string{tr(":256k") + "[data-ticked=true]", "[data-to-write='4']", "div.dlg-foot button[data-go]:not([disabled])"}, "page": []string{"Write 4 profiles"}},
-		map[string]any{"name": "standard: nothing ticked, nothing to write", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+		map[string]any{"name": "standard: nothing ticked, nothing to write", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, nil),
 			"click":   append(append([]any{}, open...), tr(":16k")+" input[data-tick]", tr(":64k")+" input[data-tick]", tr(":128k")+" input[data-tick]", comment),
 			"pageHas": []string{"[data-to-write='0']", "div.dlg-foot button[data-go][disabled]"}, "page": []string{"No row is ticked", "Write 0 profiles"}},
 		// the write sends the comment, the name and the ticked ids
-		map[string]any{"name": "standard: the write sends the ticked ids", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, written),
+		map[string]any{"name": "standard: the write sends the ticked ids", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, written),
 			"click":        append(append([]any{}, open...), tr(":256k")+" input[data-tick]", comment, "div.dlg-foot button[data-go]"),
 			"fetchedQuery": []string{`^POST /api/models/` + mdlLoaded + `/standard-set \{"comment":"standard set for gemma","short":"gemma-4-27b","ids":\["gemma-4-27b:16k","gemma-4-27b:64k","gemma-4-27b:128k","gemma-4-27b:256k"\]\}$`},
 			"pageHas":      []string{"div.dlg[data-dlg=standard][data-state=written] [data-written='4']"}, "page": []string{"Wrote 4 profiles", "gemma-4-27b: gemma-4-27b exists at 8k"}},
 		// A: a name of one's own, read again with ?short=
-		map[string]any{"name": "standard: another name reads again", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+		map[string]any{"name": "standard: another name reads again", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, nil),
 			"click":        append(append([]any{}, open...), map[string]any{"type": "div.dlg input.std-name", "value": "my-gemma"}, "div.dlg button[data-go=name]"),
 			"fetchedQuery": []string{`^GET /api/models/` + mdlLoaded + `/standard-set\?short=my-gemma$`},
 			"pageHas":      []string{"div.dlg[data-state=ready] [data-name-from=asked]", "tr[data-std='my-gemma'][data-ticked=true]", "tr[data-std='my-gemma:16k']"},
 			"page":         []string{"the name you gave"}},
 		// A: a name of another file is refused, with its reason; nothing can be written
-		map[string]any{"name": "standard: a taken name is refused", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+		map[string]any{"name": "standard: a taken name is refused", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, nil),
 			"click":    append(append([]any{}, open...), map[string]any{"type": "div.dlg input.std-name", "value": "qwen3-14b"}, "div.dlg button[data-go=name]"),
 			"pageHas":  []string{"div.dlg[data-dlg=standard][data-state=named] [data-name-refused]", "div.dlg-foot button[data-go][disabled]"},
 			"pageNone": []string{"table.std-tbl"},
 			"page":     []string{"This name cannot be used.", "the profile qwen3-14b is of another file (qwen3-14b-Q5_K_M.gguf)"}},
-		map[string]any{"name": "standard: refused", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, refused),
+		map[string]any{"name": "standard: refused", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(reads, refused),
 			"click":   append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "x"}, "div.dlg-foot button[data-go]"),
 			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=refused] [data-refused]"}, "page": []string{"Not written: nothing changed.", "read it again", "Check again"}},
-		map[string]any{"name": "standard: nothing to write", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(none, nil),
+		map[string]any{"name": "standard: nothing to write", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(none, nil),
 			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=nothing] [data-to-write='0']"}, "pageNone": []string{"div.dlg-foot button[data-go]", "input[data-tick]"},
 			"page": []string{"Nothing to write"}},
-		map[string]any{"name": "standard: the read fails", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(failed, nil),
+		map[string]any{"name": "standard: the read fails", "route": "#/models/" + mdlLoaded, "status": st, "fetch": with(failed, nil),
 			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=error]"}, "page": []string{"could not be worked out", "shutting down", "Check again"}},
 	}})
 }
@@ -295,9 +295,9 @@ func TestUINextStandardDialogPinnedFooter(t *testing.T) {
 	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
 	path := "/api/models/" + mdlLoaded + "/standard-set"
 	fetch[path] = fixtureAnswers(t, []string{"--stdset", "long"}, path)[path]
-	open := []any{"aside.side button[data-act=standard]"}
+	open := []any{"button[data-act=standard]"}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
-		map[string]any{"name": "standard: long rows scroll, the footer does not", "route": "#/models?model=" + mdlLoaded, "status": fetch["/api/status"],
+		map[string]any{"name": "standard: long rows scroll, the footer does not", "route": "#/models/" + mdlLoaded, "status": fetch["/api/status"],
 			"click": append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "x"}),
 			"pageHas": []string{"div.dlg[data-state=ready] div.std-body div.std-rows[data-std-scroll] table.std-tbl", "div.std-body div.std-foot[data-std-foot] [data-to-write='1']",
 				"div.std-foot textarea[aria-label=Comment]", "div.std-foot div.dlg-foot button[data-go]:not([disabled])", "div.std-body div.std-namef input.std-name",

@@ -25,6 +25,8 @@ import { avatar } from '../../core/avatar.js';
 import { viz, pointChart, compareBars, fitBar, columns, shapeOf, shapeSwatch, colorSwatch, legendItems, tipText } from '../../core/charts.js';
 import { passDots } from '../../core/rate.js';
 import { instanceCard, sizeLine, stateBadge, fitOf, planCell } from './common.js';
+import { restorePoints } from './kinds.js';
+import { standardDialog } from './standard.js';
 
 // ---- charts: how it runs, at a glance ----
 
@@ -209,15 +211,24 @@ function usageCard(m, st, showAll, toggleAll) {
 
 // ---- configurations ----
 
-function configCard(m, st, showGenerated, toggleGenerated) {
+function configCard(m, st, showGenerated, toggleGenerated, reload) {
   const all = m.profiles || [];
+  // the profile's host_memory: from the model's read, else the catalog's copy
+  const cat = catalog.byKey[m.key];
+  const rpOf = p => restorePoints(p) || restorePoints(((cat && cat.profiles) || []).find(x => x.id === p.id));
+  const rpCol = all.some(p => rpOf(p));
+  // "Make standard profiles" lives here, on the model's page (build-92 W1;
+  // views/models/standard.js), for a llama model whose file is there
+  const std = cat && cat.kind !== 'command' && cat.exists !== false
+    ? h('button.btn.sm', { type: 'button', 'data-act': 'standard', title: 'Plan 16k, 32k, 64k and up to the trained context, then write the ones that fit',
+      onclick: () => standardDialog(cat, text => { toast(text, 'ok'); reload(); }) }, 'Make standard profiles') : null;
   const hand = all.filter(p => !p.generated), gen = all.filter(p => p.generated);
   const loaded = new Set((m.instances || []).map(i => i.profile));
   const rows = showGenerated || !hand.length ? all.slice().sort((a, b) => (a.generated - b.generated) || a.id.localeCompare(b.id)) : hand;
   return h('section.card', { key: 'configs' },
     h('div.ch.split',
       h('div.row', h('h2', 'Configurations'), h('span.note', `${plural(hand.length, 'hand-made profile')} · ${num(gen.length)} generated for benchmarks`)),
-      h('a.btn.sm', { href: href('profiles', null, { q: m.file || m.name }) }, 'Open in Profiles')),
+      h('div.row', { style: 'gap:8px' }, std, h('a.btn.sm', { href: href('profiles', null, { q: m.file || m.name }) }, 'Open in Profiles'))),
     table({
       rows, key: p => p.id, minWidth: 900,
       columns: [
@@ -228,10 +239,12 @@ function configCard(m, st, showGenerated, toggleGenerated) {
         { label: 'Placement', render: p => (p.placement === 'forced' ? h('span', nodeChips(p.force_nodes), (p.tensor_split || []).length ? h('span.sub', 'split ' + p.tensor_split.join(' / ')) : null)
           : h('span.quiet', 'Automatic')) },
         { label: 'Memory need', cls: 'r', render: p => (p.needs_mib ? h('span', { title: plainBasis(p.needs_basis) }, mib(p.needs_mib), h('span.sub', /^estimated/.test(p.needs_basis || '') ? 'estimated' : /needs_mib/.test(p.needs_basis || '') ? 'set by hand' : 'measured')) : h('span.mut', DASH)) },
+        rpCol ? { label: 'Restore points', cls: 'r', title: 'Restore points (context checkpoints) kept on the hosting machine; "own": set in the profile\'s extra arguments',
+          render: p => { const r = rpOf(p); return r ? h('span', { 'data-restore-points': String(r.n), 'data-own': r.own ? '' : null, title: r.mib != null ? num(Math.round(r.mib)) + ' MB on the hosting machine' : null }, h('span.mono', num(r.n)), r.own ? h('span.mut', ' own') : null) : h('span.mut', DASH); } } : null,
         { label: 'Would it start now', render: p => planCell(p, st) },
         { label: '', cls: 'tight', render: p => h('span.row', { style: 'gap:6px 14px;flex-wrap:nowrap;justify-content:flex-end' },
           h('a', { href: href('placement', [p.id]) }, 'Preview'), h('a', { href: href('profiles', [p.id]) }, 'Edit')) },
-      ],
+      ].filter(Boolean),
       empty: empty('No configuration uses this file', 'The file is in the models directory, but no profile names it. Add a profile under Configure, Profiles to make it loadable.'),
     }),
     hand.length && gen.length ? h('div.cs', more(showGenerated, toggleGenerated, `Show the ${num(gen.length)} generated configurations`, 'Hide the generated configurations')) : null);
@@ -388,7 +401,7 @@ export function mountDetail(el, key) {
         insts.some(i => i.state !== 'starting') ? h('span.right', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null),
       insts.map(inst => instanceCard(st, inst, cur, open, toggle)),
       usageCard(cur, st, showAllUsage, () => { showAllUsage = !showAllUsage; view.refresh(); }),
-      configCard(cur, st, showGenerated, () => { showGenerated = !showGenerated; view.refresh(); }),
+      configCard(cur, st, showGenerated, () => { showGenerated = !showGenerated; view.refresh(); }, load),
       m ? benchCard(cur) : null,
     ];
   };

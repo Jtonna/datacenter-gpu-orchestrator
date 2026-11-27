@@ -57,3 +57,16 @@ export function zonesFor(mib, sums) {
   const i = sums.findIndex(s => s >= mib);
   return i < 0 ? 0 : i + 1;
 }
+
+// restorePoints(p) -> null for a profile whose model keeps no restore points
+// on the hosting machine (a plain family, or no host_memory served), else
+// {n, mib, own}: how many it keeps (context checkpoints), their size, and
+// whether the profile sets its own number in its extra arguments
+// (--ctx-checkpoints; host_memory.checkpoints_from, scheduler hostmem.go).
+// The Configurations tables' "Restore points" column and each profile's
+// panel read it (the owner's walkthrough, build-92 W1).
+export function restorePoints(p) {
+  const x = p && p.host_memory;
+  if (!x || !x.family || x.family === 'plain' || !(x.checkpoints > 0 || x.checkpoints_from)) return null;
+  return { n: x.checkpoints || 0, mib: x.checkpoints_mib, own: /extra arguments/.test(x.checkpoints_from || '') };
+}

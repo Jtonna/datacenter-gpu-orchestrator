@@ -42,6 +42,7 @@ import { plainReason, plainBasis, machines, nodeName } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
+import { restorePoints } from './models/kinds.js';
 
 const PER = 16; // rows a page (as the Zones list)
 
@@ -357,6 +358,9 @@ registerView({
           (e.aliases || []).length ? ['Aliases', e.aliases.join(', ')] : null,
           e.needs_mib ? ['Memory need', h('span', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : '') }, gb(e.needs_mib))] : null,
           e.needs_mib && e.needs_basis ? ['Worked out', h('span', { title: e.needs_basis }, plainBasis(e.needs_basis))] : null,
+          // the restore points it keeps on the hosting machine, and where the number comes from (build-92 W1)
+          restorePoints(e) ? ['Restore points', h('span', { 'data-restore-points': String(restorePoints(e).n), title: e.host_memory.checkpoints_from || null },
+            num(restorePoints(e).n) + ' (' + num(Math.round(restorePoints(e).mib || 0)) + ' MB)' + (restorePoints(e).own ? ' · its own, from its extra arguments' : ' · the cluster default'))] : null,
           ['Stage', h('span', { 'data-stage': profileStage(e) }, profileStage(e) === 'test' ? 'Test (' + testWhy(e) + ')' : 'Production' + (e.stage_set ? '' : ' (not marked: the rule)'))],
           e.display_name ? ['Display name', e.display_name] : null,
           ['Id', h('span.mono', e.id)],
