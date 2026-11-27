@@ -344,6 +344,10 @@ func (s *Server) putBenchmark(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteBenchmark(w http.ResponseWriter, r *http.Request) {
+	// a delete needs a comment, as a save does (body {"comment"} or X-Comment)
+	if _, ok := saveBody(w, r); !ok {
+		return
+	}
 	id := r.PathValue("id")
 	old, err := s.opts.BenchStore.GetBenchmark(id)
 	if err != nil {
@@ -511,6 +515,10 @@ func (s *Server) putSuite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSuite(w http.ResponseWriter, r *http.Request) {
+	// a delete needs a comment, as a save does (body {"comment"} or X-Comment)
+	if _, ok := saveBody(w, r); !ok {
+		return
+	}
 	id := r.PathValue("id")
 	old, _ := s.opts.BenchStore.GetSuite(id)
 	if in, _ := s.opts.BenchStore.GroupsUsing(id); len(in) > 0 {

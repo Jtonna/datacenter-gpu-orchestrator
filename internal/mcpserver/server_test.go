@@ -326,7 +326,7 @@ var expected = map[string]struct {
 	"get_bench_group":       {`{"id":"g1"}`, "GET", "/api/bench/groups/g1", "", "", nil},
 	"create_bench_group":    {`{"group":{"id":"g"},"comment":"why"}`, "POST", "/api/bench/groups", "", `{"id":"g"}`, map[string]string{"X-Comment": "why"}},
 	"update_bench_group":    {`{"id":"g","group":{"id":"g"},"comment":"why"}`, "PUT", "/api/bench/groups/g", "", `{"id":"g"}`, map[string]string{"X-Comment": "why"}},
-	"delete_bench_group":    {`{"id":"g"}`, "DELETE", "/api/bench/groups/g", "", "", nil},
+	"delete_bench_group":    {`{"id":"g","comment":"why"}`, "DELETE", "/api/bench/groups/g", "", "", map[string]string{"X-Comment": "why"}},
 	"run_bench_group":       {`{"id":"g","baseline":"br-0","note":"n","comment":"c"}`, "POST", "/api/bench/groups/g/run", "", `{"baseline":"br-0","comment":"c","note":"n"}`, nil},
 	"export_run":            {`{"id":"br-1","format":"csv","detail":"phases"}`, "GET", "/api/bench/runs/br-1/export", "detail=phases&format=csv", "", nil},
 	"get_bench_aggregates":  {`{"suite":"s","benchmark":"b","profile":"p","since":"7d","until":"2","limit_runs":4,"env":"same"}`, "GET", "/api/bench/aggregates", "benchmark=b&env=same&limit_runs=4&profile=p&since=7d&suite=s&until=2", "", nil},
@@ -355,10 +355,10 @@ var expected = map[string]struct {
 	"rollback_config":       {`{"revision":3,"if_revision":9}`, "POST", "/api/config/revisions/3/rollback", "", "", map[string]string{"If-Match": "9"}},
 	"create_benchmark":      {`{"benchmark":{"id":"b"},"comment":"why"}`, "POST", "/api/bench/benchmarks", "", `{"id":"b"}`, map[string]string{"X-Comment": "why"}},
 	"update_benchmark":      {`{"id":"b","benchmark":{"id":"b","repeats":2},"comment":"why"}`, "PUT", "/api/bench/benchmarks/b", "", `{"id":"b","repeats":2}`, map[string]string{"X-Comment": "why"}},
-	"delete_benchmark":      {`{"id":"b"}`, "DELETE", "/api/bench/benchmarks/b", "", "", nil},
+	"delete_benchmark":      {`{"id":"b","comment":"why"}`, "DELETE", "/api/bench/benchmarks/b", "", "", map[string]string{"X-Comment": "why"}},
 	"create_suite":          {`{"suite":{"id":"s"},"comment":"why"}`, "POST", "/api/bench/suites", "", `{"id":"s"}`, map[string]string{"X-Comment": "why"}},
 	"update_suite":          {`{"id":"s","suite":{"id":"s"},"comment":"why"}`, "PUT", "/api/bench/suites/s", "", `{"id":"s"}`, map[string]string{"X-Comment": "why"}},
-	"delete_suite":          {`{"id":"s"}`, "DELETE", "/api/bench/suites/s", "", "", nil},
+	"delete_suite":          {`{"id":"s","comment":"why"}`, "DELETE", "/api/bench/suites/s", "", "", map[string]string{"X-Comment": "why"}},
 	"run_suite":             {`{"id":"s","baseline":"br-0","note":"n","comment":"c"}`, "POST", "/api/bench/suites/s/run", "", `{"baseline":"br-0","comment":"c","note":"n"}`, nil},
 	"cancel_run":            {`{"id":"br-2","comment":"c"}`, "POST", "/api/bench/runs/br-2/cancel", "", `{"comment":"c"}`, nil},
 	"pause_node":            {`{"id":"02:00:00:00:00:01","comment":"fan noise"}`, "POST", "/api/nodes/02:00:00:00:00:01/pause", "", `{"comment":"fan noise"}`, nil},
@@ -460,7 +460,7 @@ func TestErrorsAndNotMerged(t *testing.T) {
 		t.Errorf("422: %+v", out)
 	}
 	f.status, f.body = 204, ``
-	if out = callTool(t, h, nil, "delete_suite", `{"id":"s"}`); out.IsError || !strings.Contains(out.Content[0].Text, "no content") {
+	if out = callTool(t, h, nil, "delete_suite", `{"id":"s","comment":"why"}`); out.IsError || !strings.Contains(out.Content[0].Text, "no content") {
 		t.Errorf("204: %+v", out)
 	}
 }

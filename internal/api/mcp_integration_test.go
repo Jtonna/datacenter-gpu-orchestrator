@@ -183,14 +183,14 @@ func TestMCPBenchmarkToolsThroughTheRealAPI(t *testing.T) {
 		t.Fatalf("%v", tr)
 	}
 	// a benchmark in use cannot be deleted; after the suite goes, it can
-	if o := mcpTool(t, h, "delete_benchmark", `{"id":"alpha-cold"}`); !o.IsError || !strings.Contains(o.Text, "HTTP 409") {
+	if o := mcpTool(t, h, "delete_benchmark", `{"id":"alpha-cold","comment":"done"}`); !o.IsError || !strings.Contains(o.Text, "HTTP 409") {
 		t.Fatalf("%+v", o)
 	}
 	mcpJSON(t, h, "update_benchmark", `{"comment":"test","id":"alpha-cold","benchmark":{"id":"alpha-cold","profile":"alpha","repeats":1,"requests":[{"name":"q","prompt":"hi","max_tokens":4}]}}`)
-	if o := mcpTool(t, h, "delete_suite", `{"id":"nightly"}`); o.IsError {
+	if o := mcpTool(t, h, "delete_suite", `{"id":"nightly","comment":"done"}`); o.IsError {
 		t.Fatalf("%+v", o)
 	}
-	if o := mcpTool(t, h, "delete_benchmark", `{"id":"alpha-cold"}`); o.IsError {
+	if o := mcpTool(t, h, "delete_benchmark", `{"id":"alpha-cold","comment":"done"}`); o.IsError {
 		t.Fatalf("%+v", o)
 	}
 }

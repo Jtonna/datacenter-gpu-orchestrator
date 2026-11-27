@@ -295,7 +295,7 @@ func benchSavePath(method, path string) bool {
 		if method == "POST" && p == root {
 			return true
 		}
-		if method == "PUT" && strings.HasPrefix(p, root+"/") && !strings.Contains(strings.TrimPrefix(p, root+"/"), "/") {
+		if (method == "PUT" || method == "DELETE") && strings.HasPrefix(p, root+"/") && !strings.Contains(strings.TrimPrefix(p, root+"/"), "/") {
 			return true
 		}
 	}

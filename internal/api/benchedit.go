@@ -16,7 +16,7 @@ import (
 // names the parts its sentences are about; a run says which of its
 // definitions changed since it ran.
 
-// saveBody reads the body of a save of a benchmark or a group. The comment
+// saveBody reads the body of a save (or a delete) of a benchmark or a group. The comment
 // (required: the body's "comment", else the X-Comment header) is taken out
 // of the body, which the strict parser then reads, and is put in X-Comment
 // so the audit entry carries it.

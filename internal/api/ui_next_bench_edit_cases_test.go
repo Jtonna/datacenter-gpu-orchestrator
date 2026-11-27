@@ -89,7 +89,7 @@ func TestUINextBenchEditors(t *testing.T) {
 		map[string]any{"name": "editors 3: the server's refusal, verbatim, the part marked", "route": "#/benchmarks/new/cold-reload-loaded", "status": st,
 			"click": []any{typeIn("input[name=name]", "Qwen new"), typeIn("select[name=profile]", "test-s3-qwen4b-3con"),
 				"[data-phase='2'] button[data-act=edit-phase]", typeIn("[data-phase='2'] [data-prompt='0'] textarea[aria-label=Prompt]", ""), comment("new"), ".ed-savebar button[data-act=save]"},
-			"has":    []string{".ed-savebar.bad [data-refused]", ".ed-phase.bad[data-phase='2'] [data-problem]"},
+			"has": []string{".ed-savebar.bad [data-refused]", ".ed-phase.bad[data-phase='2'] [data-problem]"},
 			// the save bar puts the place first in the page's words (phases counted from 1), the sentence verbatim
 			"expect": []string{"Not saved.", `Phase 3, prompt "explain": messages or prompt is required`},
 			"hash":   "#/benchmarks/new/cold-reload-loaded"},

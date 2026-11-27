@@ -162,7 +162,7 @@ curl -s -X POST $B/api/bench/groups -d '{"id":"cold-loads","benchmarks":[{"bench
 
 ## 3. Create benchmarks and suites
 
-REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. Every create and update needs a comment: `"comment"` in the body (taken out, not stored with the definition) or the `X-Comment` header; without one the answer is 400 and nothing is written. The MCP tools take `comment` as a required argument. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
+REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. Every create, update and delete needs a comment: `"comment"` in the body (taken out, not stored with the definition) or the `X-Comment` header; without one the answer is 400 and nothing is written. The MCP tools take `comment` as a required argument. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
 
 A load-only benchmark, the cleanest way to compare nodes or links:
 

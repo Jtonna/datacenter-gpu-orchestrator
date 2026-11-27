@@ -373,8 +373,8 @@ func TestMCPBenchToolsAggregatesSchemaAndBenchAudit(t *testing.T) {
 		s := j.ok(sid, "get_run", `{"id":"`+id2+`"}`)["state"]
 		return s == "completed" || s == "cancelled"
 	})
-	j.ok(sid, "delete_suite", `{"id":"quick"}`)
-	j.ok(sid, "delete_benchmark", `{"id":"load-only"}`)
+	j.ok(sid, "delete_suite", `{"id":"quick","comment":"done"}`)
+	j.ok(sid, "delete_benchmark", `{"id":"load-only","comment":"done"}`)
 
 	// the audit log: section bench, source and actor as asked
 	es := j.waitAudit("bench audit", "section=bench", 9)

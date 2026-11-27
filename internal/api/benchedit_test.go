@@ -152,3 +152,48 @@ func TestRunSaysWhichDefinitionsChangedSince(t *testing.T) {
 		t.Fatalf("run %v", run["state"])
 	}
 }
+
+// A delete of a benchmark or a group needs a comment as a save does, and the
+// refusal says how to give one, so an agent can correct itself from it alone.
+func TestBenchDeletesNeedACommentAndTheRefusalSaysHow(t *testing.T) {
+	if !strings.Contains(commentRequired, `"comment"`) || !strings.Contains(commentRequired, "X-Comment") {
+		t.Fatalf("the refusal does not name both ways: %q", commentRequired)
+	}
+	e := benchEnv(t)
+	hdr := map[string]string{"X-Comment": "setup"}
+	for _, c := range []struct{ path, body string }{
+		{"/api/bench/benchmarks", `{"id":"d1","profile":"alpha","requests":[{"prompt":"hi","max_tokens":4}]}`},
+		{"/api/bench/groups", `{"id":"dg","benchmarks":["d1"]}`},
+		{"/api/bench/suites", `{"id":"ds","benchmarks":["d1"]}`},
+	} {
+		if st, m := e.jdo("POST", c.path, c.body, hdr); st != 201 {
+			t.Fatalf("POST %s: %d %v", c.path, st, m)
+		}
+	}
+	// groups and suites first: the benchmark is in use until they are gone
+	for _, p := range []string{"/api/bench/groups/dg", "/api/bench/suites/ds", "/api/bench/benchmarks/d1"} {
+		st, m := e.jdo("DELETE", p, "", nil)
+		if st != 400 || errMsg(m) != commentRequired {
+			t.Fatalf("DELETE %s without a comment: %d %v", p, st, m)
+		}
+		if er, _ := m["error"].(map[string]any); er["type"] != "invalid_request_error" || er["code"] != 400.0 {
+			t.Fatalf("DELETE %s refusal shape: %v", p, m)
+		}
+		if st, m := e.jdo("DELETE", p, "", map[string]string{"X-Comment": " "}); st != 400 {
+			t.Fatalf("DELETE %s with a blank comment: %d %v", p, st, m)
+		}
+		if st, m := e.jdo("GET", p, "", nil); st != 200 {
+			t.Fatalf("GET %s after the refused deletes: %d %v (it was deleted)", p, st, m)
+		}
+	}
+	// the header, or the body's comment
+	if st, m := e.jdo("DELETE", "/api/bench/groups/dg", "", map[string]string{"X-Comment": "no longer run"}); st != 200 {
+		t.Fatalf("DELETE group with X-Comment: %d %v", st, m)
+	}
+	if st, m := e.jdo("DELETE", "/api/bench/suites/ds", `{"comment":"no longer run"}`, nil); st != 200 {
+		t.Fatalf("DELETE suite with a body comment: %d %v", st, m)
+	}
+	if st, m := e.jdo("DELETE", "/api/bench/benchmarks/d1", `{"comment":"no longer run"}`, nil); st != 200 {
+		t.Fatalf("DELETE benchmark with a body comment: %d %v", st, m)
+	}
+}

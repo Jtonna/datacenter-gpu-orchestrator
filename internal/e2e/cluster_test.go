@@ -220,7 +220,7 @@ func (c *cluster) do(method, path, body string) (int, string, http.Header) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	// a save of a benchmark or a group needs a comment (the editors)
-	if p := strings.SplitN(path, "?", 2)[0]; (method == "POST" || method == "PUT") && req.Header.Get("X-Comment") == "" && !strings.Contains(body, `"comment"`) &&
+	if p := strings.SplitN(path, "?", 2)[0]; (method == "POST" || method == "PUT" || method == "DELETE") && req.Header.Get("X-Comment") == "" && !strings.Contains(body, `"comment"`) &&
 		(strings.HasPrefix(p, "/api/bench/benchmarks") || strings.HasPrefix(p, "/api/bench/suites") || strings.HasPrefix(p, "/api/bench/groups")) {
 		req.Header.Set("X-Comment", "e2e test")
 	}
