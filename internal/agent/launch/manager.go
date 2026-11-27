@@ -386,8 +386,12 @@ const (
 // alone: with mode "false" (the operator says so), or in auto when it is a
 // CUDA device that does not report shares_system_memory. Every other device,
 // and any doubt, is held to MemAvailable too: shares_system_memory comes from
-// a heuristic (devices.SharesSystemMemory), and a console's Vulkan device
-// reports nearly all the RAM as free. Mode "true" holds every device to it.
+// a heuristic (devices.SharesSystemMemory), and a device whose GPU memory is
+// system RAM (an integrated GPU) can report nearly all the RAM as free, so
+// a device the agent cannot vouch for is treated as one. Mode "true" holds
+// every device to it. (A narrower rule, held to MemAvailable only when
+// shares_system_memory is true or the device cannot be matched to a GPU of
+// the machine, needs an agent release and a test on a discrete AMD card.)
 func TestsSystemMemory(mode string, d agentproto.Device) bool {
 	switch mode {
 	case SharedMemoryTrue:
@@ -1200,8 +1204,8 @@ func (m *Manager) tick(ctx context.Context) {
 		if avail < m.cfg.WatchdogFloorMiB && r.rec.Cause != agentproto.ExitWatchdog && r.state != agentproto.StateExited {
 			msg := fmt.Sprintf("MemAvailable %d MiB fell below the watchdog floor of %d MiB", avail, m.cfg.WatchdogFloorMiB)
 			m.log.Error("watchdog", "launch_id", r.rec.LaunchID, "msg", msg)
-			// CONTRACT-QUESTION: 6.7 says "kills"; a PS5 out of memory freezes
-			// within seconds, so the watchdog kills at once (SIGKILL) instead of
+			// CONTRACT-QUESTION: 6.7 says "kills"; a shared-memory machine out of
+			// memory can freeze within seconds, so the watchdog kills at once (SIGKILL) instead of
 			// TERM and a 10 s wait. Its reason replaces an earlier plain stop.
 			r.rec.Cause = ""
 			m.stopLocked(r, agentproto.ExitWatchdog, msg, true)
