@@ -116,7 +116,7 @@ const testYAML = `
 listen: ":0"
 fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
-defaults: {ttl: 0s, min_hold: 1ms, max_hold: 1s, stall_timeout: 0s}
+defaults: {ttl: 0s, min_hold: 1ms, max_hold: 1s, stall_timeout: 0s, membership: fleet}
 tiers:
   - match: {local: true}
     priority: 1

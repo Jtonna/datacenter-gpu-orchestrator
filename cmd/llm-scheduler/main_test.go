@@ -20,7 +20,7 @@ func writeConfig(t *testing.T, models, profiles string) string {
 	t.Helper()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.yaml")
-	y := "listen: \"127.0.0.1:0\"\nmodels_dir: " + filepath.ToSlash(models) + "\ntiers:\n  - match: {local: true}\n    priority: 1\nprofiles:\n" + profiles
+	y := "listen: \"127.0.0.1:0\"\nmodels_dir: " + filepath.ToSlash(models) + "\ndefaults: {membership: fleet}\ntiers:\n  - match: {local: true}\n    priority: 1\nprofiles:\n" + profiles
 	if err := os.WriteFile(p, []byte(y), 0o644); err != nil {
 		t.Fatal(err)
 	}

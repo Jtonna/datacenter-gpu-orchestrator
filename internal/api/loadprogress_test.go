@@ -51,6 +51,7 @@ func loadingEnv(t *testing.T) *env {
 listen: ":0"
 fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
+defaults: {membership: fleet}
 tiers:
   - match: {hostname: "ps5-*"}
     priority: 1

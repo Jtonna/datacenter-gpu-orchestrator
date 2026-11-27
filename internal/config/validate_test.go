@@ -337,7 +337,7 @@ func TestMembershipSetting(t *testing.T) {
 		t.Fatalf("worker_start_timeout field = %+v", f)
 	}
 	f, ok := SettingFieldByKey(ScopeSettings, "membership")
-	if !ok || !f.RestartRequired || f.Default != "fleet" {
+	if !ok || !f.RestartRequired || f.Default != "agents" {
 		t.Fatalf("membership field = %+v", f)
 	}
 }

@@ -127,7 +127,7 @@ func ssEnv(t *testing.T) (*env, *cfgsvc.Service, *cfgstore.Store) {
 	})
 	doc, err := config.ParseDocument([]byte(`{
 		"fleet": {"url": "http://127.0.0.1:1", "local_node": "host-1"},
-		"settings": {"max_pool": 4},
+		"settings": {"max_pool": 4, "membership": "fleet"},
 		"exclude_nodes": ["host-1"],
 		"tiers": [{"match": {"local": true}, "priority": 1, "headroom_mib": 256}, {"match": {"local": false}, "priority": 1, "headroom_mib": 256}],
 		"profiles": {

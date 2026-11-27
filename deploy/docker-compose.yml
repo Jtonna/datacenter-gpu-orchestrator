@@ -1,6 +1,6 @@
 # Potluck: the scheduler, the model share and the log store, as a standing deployment
 # (docs/runbook.md; an older layout moves with "Move an existing deployment to the standing layout").
-# Nodes come from potluck-agent registrations (membership agents): no fleet console is needed.
+# Nodes come from potluck-agent registrations (membership agents): no other node source is needed.
 #
 # Everything the deployment keeps on the host lives under ONE folder, POTLUCK_ROOT
 # (default /srv/potluck; set it in an .env file next to this file to move it):
@@ -169,7 +169,9 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /srv/llama-swap/models
+      # the host folder of the model files: POTLUCK_MODELS_DIR in the .env file
+      # (an existing deployment sets it to the folder it uses today)
+      device: ${POTLUCK_MODELS_DIR:-/srv/potluck/models}
   # The data directory of the optional host agent (potluck-agent service).
   potluck-agent-data:
 

@@ -363,7 +363,7 @@
     "fleet",
     "agents"
    ],
-   "default": "fleet",
+   "default": "agents",
    "description": "Where the pool's nodes come from: agents (registrations of potluck-agent) or fleet (the legacy fleet feed). Read once at start.",
    "restart_required": true
   },

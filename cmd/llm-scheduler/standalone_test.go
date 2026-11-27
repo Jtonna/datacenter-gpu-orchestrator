@@ -101,7 +101,7 @@ func TestAgentsStartStandsAlone(t *testing.T) {
 
 // Fleet membership keeps its start-up checks and their wording.
 func TestFleetStartStillChecksTheFleetConsole(t *testing.T) {
-	out := startLog(t, "listen: \"127.0.0.1:0\"\nprofiles: {}\n", "no fleet.url configured: only the local node can be used")
+	out := startLog(t, "listen: \"127.0.0.1:0\"\ndefaults: {membership: fleet}\nprofiles: {}\n", "no fleet.url configured: only the local node can be used")
 	if !strings.Contains(out, "level=ERROR") {
 		t.Fatalf("the missing fleet.url is no longer an ERROR:\n%s", out)
 	}

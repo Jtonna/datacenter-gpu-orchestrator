@@ -74,6 +74,9 @@ func testConfig() *config.Config {
 	// The connect probe is off by default; most health tests exercise it, so
 	// the harness turns it on. Tests of the default set WorkerProbeInterval = 0.
 	d.WorkerProbeInterval = 10 * time.Second
+	// The harness feeds nodes through a fake view, the legacy fleet way
+	// (membership fleet; the built-in default is agents since build-92).
+	d.Membership = config.MembershipFleet
 	return &config.Config{
 		Fleet:     config.Fleet{LocalNode: "host-1", StaleAfter: 60 * time.Second},
 		ModelsDir: "/models",

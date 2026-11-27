@@ -29,7 +29,7 @@ func DefaultDefaults() Defaults {
 		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
 		WorkerSilence:   30 * time.Second,
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
-		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
+		Membership: MembershipAgents, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
 		HostOverheadMiB: 1024, PlacementToleranceMiB: 128,
 		NodeHostCacheRAMMiB: 0, CtxCheckpoints: 32, CountHostMemory: false,

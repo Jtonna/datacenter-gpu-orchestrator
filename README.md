@@ -68,6 +68,8 @@ docker build -f deploy/Dockerfile -t llm-scheduler:local \
 docker run --rm --entrypoint llm-scheduler llm-scheduler:local --version
 ```
 
+`BASE_IMAGE` has no default: a build without it stops in its first step with "BASE_IMAGE is required: pass --build-arg BASE_IMAGE=<image>". `deploy/rpc-build.Dockerfile` takes the same required argument (the image it adds `llama-server-rpc` to).
+
 ### 3. Install the deployment files
 
 ```sh

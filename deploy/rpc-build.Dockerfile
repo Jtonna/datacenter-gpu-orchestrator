@@ -1,10 +1,10 @@
-# llama-server-rpc image for this fleet.
+# llama-server-rpc image: the base of the scheduler image (deploy/Dockerfile).
 #
-# Builds the llama.cpp `llama-server` binary from the PS5 datacenter fork
+# Builds the llama.cpp `llama-server` binary from the Potluck llama.cpp fork
 # (https://github.com/Jtonna/llama.cpp-for-datacenter-gpu-orchestrator) and
 # installs it as `llama-server-rpc`.
 #
-# Pinned fork commit: a01665d30de2885879a64eae999067ef3ef5fd4b (branch ps5-loader-fixes):
+# Pinned fork commit: a01665d30de2885879a64eae999067ef3ef5fd4b (the fork's loader-fixes branch):
 # parallel RPC tensor upload on upstream 0a7675746 (RPC protocol 10), plus two loader
 # thread-safety fixes (shared file position on the non-mmap path; async upload map lookup
 # on the mmap path). Validated on the cluster on 2026-11-20: output identical to the build
@@ -15,6 +15,18 @@
 # download of the prebuilt UI fails the build when the commit does not match "latest".
 #
 # The stock pre-fork variant is kept as `rpc-build.Dockerfile.stock` for rollback.
+#
+# BASE_IMAGE is required (no default): the image the binary is added to, one
+# with the CUDA 13 runtime and the stock llama-server.
+#   docker build -f deploy/rpc-build.Dockerfile --build-arg BASE_IMAGE=<image> -t <tag> .
+ARG BASE_IMAGE
+# The base image is a required build argument: this small stage fails the
+# build at once, with what to pass, when it is missing.
+FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS base-image-check
+ARG BASE_IMAGE
+RUN if [ -z "$BASE_IMAGE" ]; then echo "BASE_IMAGE is required: pass --build-arg BASE_IMAGE=<image>, an image that has llama-server (see README.md, Build the scheduler image)." >&2; exit 1; fi \
+    && touch /base-image-ok
+
 FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS build
 ARG LLAMA_REMOTE=https://github.com/Jtonna/llama.cpp-for-datacenter-gpu-orchestrator.git
 ARG LLAMA_COMMIT=a01665d30de2885879a64eae999067ef3ef5fd4b
@@ -32,7 +44,8 @@ RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
     && cmake --build build --target llama-server -j ${JOBS}
 
-FROM llama-swap-whisper:local
+FROM ${BASE_IMAGE:-scratch}
+COPY --from=base-image-check /base-image-ok /tmp/.base-image-ok
 COPY --from=build /src/build/bin/llama-server /usr/local/bin/llama-server-rpc
 # Resolve .local names through the host avahi socket (mounted at /run/avahi-daemon).
 RUN apt-get update \

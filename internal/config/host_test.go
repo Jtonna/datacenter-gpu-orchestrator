@@ -23,7 +23,7 @@ func TestProfileHost(t *testing.T) {
 	}
 	for _, tt := range []struct{ name, yaml, want string }{
 		{"no force_nodes", prof(llama+"    host: node\n") + agents, "requires force_nodes"},
-		{"fleet membership", prof(llama + "    force_nodes: [console-a]\n    host: node\n"), "requires membership: agents"},
+		{"fleet membership", prof(llama+"    force_nodes: [node-a]\n    host: node\n") + "defaults: {membership: fleet}\n", "requires membership: agents"},
 		{"unknown", prof(llama+"    host: laptop\n") + agents, "unknown value"},
 		{"command", prof("  c:\n    kind: command\n    cmd: run ${PORT}\n    needs_mib: 100\n    host: node\n") + agents, "only valid with kind: llama"},
 	} {

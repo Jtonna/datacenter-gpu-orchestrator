@@ -88,7 +88,7 @@ listen: ":0"
 fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
 `+extra+`
-defaults: {ttl: 0s, worker_probe_interval: 20ms, worker_silence: 200ms}
+defaults: {ttl: 0s, worker_probe_interval: 20ms, worker_silence: 200ms, membership: fleet}
 tiers:
   - match: {hostname: "ps5-*"}
     priority: 1

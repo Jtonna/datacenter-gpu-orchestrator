@@ -1,5 +1,14 @@
-# llama-server with RPC, same llama.cpp commit as the llama-swap image and the Nvidia laptop rpc-server.
+# llama-server with RPC from stock llama.cpp, the same commit as a CUDA worker's rpc-server.
 # Installed as llama-server-rpc beside the stock llama-server; nothing existing is replaced.
+# BASE_IMAGE is required (no default): the image the binary is added to.
+ARG BASE_IMAGE
+# The base image is a required build argument: this small stage fails the
+# build at once, with what to pass, when it is missing.
+FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS base-image-check
+ARG BASE_IMAGE
+RUN if [ -z "$BASE_IMAGE" ]; then echo "BASE_IMAGE is required: pass --build-arg BASE_IMAGE=<image>, an image that has llama-server (see README.md, Build the scheduler image)." >&2; exit 1; fi \
+    && touch /base-image-ok
+
 FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS build
 ARG LLAMA_COMMIT=330f0189c9fc71ef631f40211660a87d99251cc1
 ARG JOBS=12
@@ -16,7 +25,8 @@ RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
     && cmake --build build --target llama-server -j ${JOBS}
 
-FROM llama-swap-whisper:local
+FROM ${BASE_IMAGE:-scratch}
+COPY --from=base-image-check /base-image-ok /tmp/.base-image-ok
 COPY --from=build /src/build/bin/llama-server /usr/local/bin/llama-server-rpc
 # Resolve .local names through the host avahi socket (mounted at /run/avahi-daemon).
 RUN apt-get update \

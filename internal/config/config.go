@@ -233,9 +233,10 @@ type Defaults struct {
 	// fleet view only). 0 disables. Default 768.
 	LoadMemoryFloorMiB int
 
-	// Membership is where the pool's nodes come from: MembershipFleet (the
-	// fleet console feed, the default) or MembershipAgents (registrations and
-	// heartbeats of potluck-agent, agent contract 2.7). Read at start.
+	// Membership is where the pool's nodes come from: MembershipAgents
+	// (registrations and heartbeats of potluck-agent, agent contract 2.7; the
+	// default since build-92) or MembershipFleet (the legacy fleet feed).
+	// Read at start.
 	Membership string
 	// WorkerModelDir is the worker launch's model_dir (agent contract 6.2):
 	// true lets a worker read model files itself. Off by default.
@@ -335,8 +336,8 @@ type Defaults struct {
 	CountHostMemory     bool
 }
 
-// Values of defaults.membership. MembershipFleet is the legacy mode, kept
-// until phase 7.
+// Values of defaults.membership. MembershipAgents is the built-in default
+// (since build-92); MembershipFleet is the legacy mode, kept until phase 7.
 const (
 	MembershipFleet  = "fleet"
 	MembershipAgents = "agents"

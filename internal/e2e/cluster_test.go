@@ -123,6 +123,7 @@ fleet: {url: "%s", local_node: host-1, stale_after: 60s}
 models_dir: "%s"
 local_probe_cmd: "%s --nvidia-smi 8151 0"
 defaults:
+  membership: fleet
   ttl: 0s
   min_hold: 1ms
   max_hold: 1s
