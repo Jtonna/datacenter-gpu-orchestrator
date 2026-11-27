@@ -38,7 +38,7 @@ import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, 
 import { openPanel, openPanelNow } from '../core/panel.js';
 import { pager } from '../core/pager.js';
 import { num, mib, gb, ctx, plural, dur } from '../core/format.js';
-import { plainReason, plainBasis, machines, nodeName } from '../core/status.js';
+import { plainReason, plainBasis, machines, nodeName, zoneChips } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
@@ -335,7 +335,7 @@ function panelBody(id, e, spec) {
       ['Generated', h('span', { 'data-fact': 'generated' }, e.generated ? 'yes, for benchmarks' : 'no, made by hand')],
     ])),
     h('section.prf-part', { key: 'placement' }, h('h3', 'Placement'),
-      force.length ? [h('div', h('span.mut', 'Forced on ' + plural(force.length, 'zone') + ': '), nodeChips(force)),
+      force.length ? [h('div', h('span.mut', 'Forced on ' + plural(force.length, 'zone') + ': '), zoneChips(state.status || {}, force, plan)),
         (e.tensor_split || []).length ? h('div', h('span.mut', 'Tensor split: '), h('span.mono', e.tensor_split.join(' / '))) : null]
         : h('div', 'Automatic: the scheduler picks the zones at each load.', (e.allow_tiers || []).length ? h('span.mut', ' Tiers ' + e.allow_tiers.join(', ') + ' only.') : null),
       e.host === 'node' ? h('div', hostLine(e)) : null,

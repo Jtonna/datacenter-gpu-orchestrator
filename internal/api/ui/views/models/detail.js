@@ -17,9 +17,9 @@ import { h } from '../../core/dom.js';
 import { href } from '../../core/router.js';
 import { state, listen } from '../../core/store.js';
 import * as api from '../../core/api.js';
-import { liveView, badge, nodeChips, stat, table, empty, skeleton, backLink, more, legend, dialog, toast } from '../../core/ui.js';
+import { liveView, badge, stat, table, empty, skeleton, backLink, more, legend, dialog, toast } from '../../core/ui.js';
 import { num, gb, gbNum, mib, bytes, ctx, dur, ago, plural, agoText, dateTime, clock, DASH } from '../../core/format.js';
-import { staleBanner, machines, plainReason, plainBasis } from '../../core/status.js';
+import { staleBanner, machines, plainReason, plainBasis, zoneChips } from '../../core/status.js';
 import { catalog, onCatalog, needCatalog } from '../../core/catalog.js';
 import { avatar } from '../../core/avatar.js';
 import { viz, pointChart, compareBars, fitBar, columns, shapeOf, shapeSwatch, colorSwatch, legendItems, tipText } from '../../core/charts.js';
@@ -236,7 +236,7 @@ function configCard(m, st, showGenerated, toggleGenerated, reload) {
           (p.aliases || []).length ? h('span.sub', 'also ' + p.aliases.join(', ')) : null) },
         { label: 'Made', cls: 'tight', render: p => (p.generated ? h('span.quiet', { title: 'An auto-generated benchmark configuration' }, 'Generated') : 'By hand') },
         { label: 'Context', cls: 'r', render: p => ctx(p.ctx) },
-        { label: 'Placement', render: p => (p.placement === 'forced' ? h('span', nodeChips(p.force_nodes), (p.tensor_split || []).length ? h('span.sub', 'split ' + p.tensor_split.join(' / ')) : null)
+        { label: 'Placement', render: p => (p.placement === 'forced' ? h('span', zoneChips(st, p.force_nodes, p.plan), (p.tensor_split || []).length ? h('span.sub', 'split ' + p.tensor_split.join(' / ')) : null)
           : h('span.quiet', 'Automatic')) },
         { label: 'Memory need', cls: 'r', render: p => (p.needs_mib ? h('span', { title: plainBasis(p.needs_basis) }, mib(p.needs_mib), h('span.sub', /^estimated/.test(p.needs_basis || '') ? 'estimated' : /needs_mib/.test(p.needs_basis || '') ? 'set by hand' : 'measured')) : h('span.mut', DASH)) },
         rpCol ? { label: 'Restore points', cls: 'r', title: 'Restore points (context checkpoints) kept on the hosting machine; "own": set in the profile\'s extra arguments',

@@ -13,6 +13,25 @@ export function nodeName(st, id) {
   const n = viewNodes(st).find(x => x.id === id);
   return (n && n.hostname) || id;
 }
+// zoneLabel(st, id, plan) -> a zone's name for a page, by the profile
+// editor's rule (build-89): the plan's own name for that node
+// (plan.memory.nodes[].node), else the zones' names (nodeName), else the id
+// itself (a zone with no name)
+export function zoneLabel(st, id, plan) {
+  const own = ((plan && plan.memory && plan.memory.nodes) || []).find(n => n && n.id === id && n.node);
+  return own ? own.node : nodeName(st, id);
+}
+// zoneChips(st, ids, plan) -> the chips of forced zones by their names, the
+// id on hover only; a zone with no name shows its id, marked as such
+// (the reviewer, build-92: a hardware address is never a column's text
+// when the zone has a name)
+export function zoneChips(st, ids, plan) {
+  return h('span.nodes', (ids || []).map(id => {
+    const name = zoneLabel(st, id, plan);
+    return name !== id ? h('span.node', { title: id, 'data-zone': id }, name)
+      : h('span.node.mono', { title: 'This zone has no name: its id', 'data-zone': id, 'data-noname': '' }, id);
+  }));
+}
 export const findNode = (st, idOrHost) => viewNodes(st).find(x => x.id === idOrHost || x.hostname === idOrHost) || null;
 // nodeByAddr(st, '192.0.2.21:50052') -> the view node with that rpc address.
 export const nodeByAddr = (st, addr) => viewNodes(st).find(x => x.addr && x.addr === addr) || null;
