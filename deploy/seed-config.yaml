@@ -8,7 +8,7 @@
 # Same content as configs/example.yaml (where every field is explained) apart
 # from this header, the three deployment paths below and the measuring template at the end
 # of the profiles. It describes an agents-mode deployment: the workers run potluck-agent and
-# register themselves; no fleet console is needed. Before importing, change at least:
+# register themselves; no other node source is needed. Before importing, change at least:
 #   local_node       the node name of the machine the scheduler runs on
 #   tiers            platforms and hostname globs that match your machines
 #   profiles         model files that exist in the models volume
@@ -73,14 +73,14 @@ defaults:
   # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight
 
 tiers:                     # how nodes are ranked. First match wins; a node matching no tier is never used
-  - match: { platform: "linux-amd64-vulkan" }   # the platform an agent registered with (exact): the consoles
+  - match: { platform: "linux-amd64-vulkan" }   # the platform an agent registered with (exact): here, machines whose GPU memory is system RAM (integrated GPUs)
     priority: 1            # lower is preferred: models go to these nodes first
     headroom_mib: 1024     # memory kept free on each node of this tier
     shared_memory: true    # the node's GPU memory is system RAM
     link_mb_s: 100         # link speed in MB/s, used to size load timeouts
     settle: 3s             # how long a node is unusable after an instance releases it
     # A tier can also match a device an agent reports (a case-insensitive glob), for example
-    # match: { platform: "linux-amd64-vulkan", device: "AMD Custom GPU*" }
+    # match: { platform: "linux-amd64-vulkan", device: "*Radeon*" }
   - match: { hostname: "laptop-*" }   # a CUDA laptop, by its hostname (a case-insensitive glob)
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
@@ -97,7 +97,7 @@ tiers:                     # how nodes are ranked. First match wins; a node matc
 # it still shows in /api/status (excluded: true). Excluding wins over force_nodes.
 # Excluding the local node (host-1) means the host machine's GPU is never used.
 # exclude_nodes:
-#   - console-test*
+#   - node-test*
 
 # Optional: nodes for forced profiles only. Same entries and matching as
 # exclude_nodes. Automatic placement never picks such a node and never evicts
@@ -125,7 +125,7 @@ profiles:                  # what clients can ask for; the key is the model name
     kv_quant: q8_0         # key-value cache precision: f16 (default), q8_0 or q4_0; q8_0 and q4_0 need flash_attn
     flash_attn: true       # turn flash attention on
     allow_tiers: [1, 2]    # tier priorities this profile may use; empty means all
-    # force_nodes: [console-1, console-2]   # node ids or hostnames, in device order, instead of automatic placement
+    # force_nodes: [node-1, node-2]         # node ids or hostnames, in device order, instead of automatic placement
     # tensor_split: [50, 50]                # explicit split weights, one per forced node
 
   # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ profiles:                  # what clients can ask for; the key is the model name
   #   ctx: 32768                 # the variant being sized
   #   kv_quant: q8_0
   #   flash_attn: true
-  #   force_nodes: [console-1, laptop-1]   # device order = this order
+  #   force_nodes: [node-1, laptop-1]      # device order = this order
   #   tensor_split: [60, 40]
 
 # Benchmarks (docs/benchmark-guide.md): test cases and groups of them ("suites") that the

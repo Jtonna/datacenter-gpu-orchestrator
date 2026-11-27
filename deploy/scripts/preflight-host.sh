@@ -5,8 +5,8 @@
 set -eu
 
 CONFIG="${1:-/opt/llm-scheduler/seed-config.yaml}"
-MODELS_HOST_DIR="${MODELS_HOST_DIR:-/srv/llama-swap/models}"
-BASE_IMAGE="${BASE_IMAGE:-llama-swap-whisper:rpc-330f018}"
+MODELS_HOST_DIR="${MODELS_HOST_DIR:-${POTLUCK_MODELS_DIR:-/srv/potluck/models}}"
+BASE_IMAGE="${BASE_IMAGE:-}"   # the image deploy/Dockerfile is built on (required there too)
 FLEET_URL="${FLEET_URL:-http://127.0.0.1:8090}"
 SUBNET="172.30.0.0/24"
 TMP="${TMPDIR:-/tmp}/preflight-models.$$"
@@ -22,10 +22,12 @@ have curl || { echo "curl is required" >&2; exit 2; }
 
 echo "== 1. Docker and images"
 if have docker; then ok "docker present ($(docker --version))"; else fail "docker not found"; fi
-if have docker && docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
+if [ -z "$BASE_IMAGE" ]; then
+  warn "BASE_IMAGE is not set: the base image is not checked (set BASE_IMAGE=<image> to check it)"
+elif have docker && docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
   ok "base image present: $BASE_IMAGE"
 else
-  fail "base image missing: $BASE_IMAGE (rebuild per apps/llama-swap/README.md in host-1-fleet-manager)"
+  fail "base image missing: $BASE_IMAGE (build one with deploy/rpc-build.Dockerfile; README, Build the scheduler image)"
 fi
 if have docker && docker image inspect llm-scheduler:local >/dev/null 2>&1; then
   ok "llm-scheduler:local is built"
@@ -50,25 +52,25 @@ while IFS= read -r f; do
 done < "$TMP"
 rm -f "$TMP"
 
-echo "== 3. Fleet console at $FLEET_URL"
+echo "== 3. Legacy fleet feed at $FLEET_URL (membership fleet only)"
 FLEET_JSON="$(curl -fsS --max-time 5 "$FLEET_URL/api/fleet" 2>/dev/null || true)"
 if [ -z "$FLEET_JSON" ]; then
   fail "no answer from $FLEET_URL/api/fleet"
 else
-  ok "fleet console answered"
+  ok "fleet feed answered"
   if printf '%s' "$FLEET_JSON" | grep -q '"members"'; then ok "response has members"; else fail "no \"members\" in response"; fi
   if printf '%s' "$FLEET_JSON" | grep -q '"ip" *:' && printf '%s' "$FLEET_JSON" | grep -q '"rpc_port" *:'; then
     ok "members carry ip and rpc_port fields (fleet-scheduler-fields version)"
   else
-    fail "members have no ip/rpc_port fields: fleet manager is not on branch fleet-scheduler-fields"
+    fail "members have no ip/rpc_port fields: the fleet feed does not serve the fields the scheduler needs"
   fi
   if printf '%s' "$FLEET_JSON" | grep -q '"ip" *: *null'; then
-    warn "some members show ip: null (relayed nodes until hub patch hub-member-ip is live; node_overrides covers the Nvidia laptop)"
+    warn "some members show ip: null (relayed nodes): give those nodes an address with node_overrides"
   fi
 fi
 
 echo "== 4. Host firewall: $SUBNET -> 8090"
-RULE_CMD="sudo ufw allow from $SUBNET to any port 8090 proto tcp comment 'llm-scheduler to fleet console'"
+RULE_CMD="sudo ufw allow from $SUBNET to any port 8090 proto tcp comment 'llm-scheduler to fleet feed'"
 UFW_OUT=""
 if have ufw; then UFW_OUT="$(ufw status 2>/dev/null || sudo -n ufw status 2>/dev/null || true)"; fi
 if [ -n "$UFW_OUT" ]; then

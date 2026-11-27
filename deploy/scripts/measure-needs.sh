@@ -34,7 +34,7 @@ while :; do
   S="$(state)"
   [ "$S" = "ready" ] && break
   if [ "$T" -ge "$WAIT_MAX_S" ]; then
-    echo "timed out after ${WAIT_MAX_S}s (last state: ${S:-none}). See: docker logs llama-swap" >&2
+    echo "timed out after ${WAIT_MAX_S}s (last state: ${S:-none}). See: docker logs potluck" >&2
     exit 1
   fi
   printf '\r  state=%s waited=%ss   ' "${S:-queued}" "$T"

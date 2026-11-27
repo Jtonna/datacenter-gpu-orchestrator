@@ -2,6 +2,29 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## build-92 — Scheduler image: walk-through page fixes, and a generic product
+
+No agent change, no new port, no table, no new setting key, no API field renamed, no migration. One default changes (the node source, below). Two parts.
+
+### Pages: the walk-through fixes
+
+- **The gear opens Settings** (W4). Its menu: Settings, Profiles, Test profiles, Tiers and zones, Placement preview, Audit, About, with Logs last.
+- **Benchmarks Overview** (W3): Recent runs comes before Latest result for each model. Run again is offered on a direct run (only a recipe's run is greyed); a cancelled run is marked grey; memory under 1 GB is said in MB.
+- **One rule for font weights** (W3): every weight in the style sheet is one of seven named weights (body, label, strong, number, button, heading, title); figures in the mono face are regular, not bold.
+- **The model panel is calmer** (W1): host memory in one sentence, the per-profile figure in the Restore points column, the logged file name on hover; "Make standard profiles" opens from the model's page.
+- **Test profiles** (W2): a plain Promote that asks twice (Review, then "Promote <name>?"), a row opens the same profile panel as on Profiles, and "Compare with" sets two profiles side by side, flag by flag, with both plans. No new route.
+
+### A generic product: nothing names one owner's machines
+
+- **The install script** (`GET /install.sh?zone=<id>`, the command of Create new zone) refuses only for properties of the machine: a machine set up by the Potluck starter (`/etc/potluck/starter.env` exists: "use the starter (potluck-starter.sh), not this script"), a machine whose root file system is in memory (tmpfs or ramfs: "an install would not survive a restart"), and the machine that runs the scheduler (as before). It no longer refuses for a host name, a GPU name, a payload file or a unit name: a machine with any of those now installs. Nothing was changed on a refused machine, as before.
+- **`--not-a-console`** is accepted and ignored for this one release (no error, not passed on to `potluck-agent-setup`), so a command copied from an older runbook still runs. It will be removed in a later release.
+- **The default node source is `agents`.** A configuration that does not set `membership` now reads nodes from potluck-agent registrations. A stored `membership: fleet` still reads the legacy fleet feed, and a stored `agents` is unchanged. An install whose stored configuration has no `membership` key and relies on a fleet url must set `membership: fleet` before it runs this image. The start-up log says where the nodes come from ("membership is agents: nodes come from potluck-agent registrations").
+- **Docker: the base image is a required build argument.** `deploy/Dockerfile` and both `deploy/rpc-build.Dockerfile*` take `--build-arg BASE_IMAGE=<image>` with no default; a build without it stops at once with "BASE_IMAGE is required: pass --build-arg BASE_IMAGE=<image>, ...". The image tag a deployment used before keeps working when it is passed.
+- **Compose: the models folder is a variable.** The models volume binds `${POTLUCK_MODELS_DIR:-/srv/potluck/models}`. An existing deployment sets `POTLUCK_MODELS_DIR` in its `.env` to the folder it uses today before the next `docker compose up`.
+- **Words.** The pages count machines as zones whatever their host names; the restart action says "Not available: Potluck cannot restart a machine yet."; the start-up sentence, the Settings and Tiers texts, the benchmark placement refusals ("any 3 zones: only 2 can take a load now", "is not a placeable zone"), the MCP tool texts and the log lines say zone, machine or "the legacy fleet feed". A benchmark run stored before keeps its old reason and is still shown in short as "Not a placeable zone". The seed and example configurations use neutral names (node-1, laptop-1, node-test*).
+- **A guard.** `go test ./internal/genericguard/` fails on a brand word or "console" as a machine word in the web UI, in Go product strings, in `deploy/` and in `configs/`; the few true exceptions are listed in `internal/genericguard/allow.txt`.
+- **Going back:** the image before serves the old install script (it is made per request; nothing is stored) and reads `membership` as before (a configuration without the key is fleet there). A stored configuration is not rewritten by this image.
+
 ## build-91 — Scheduler image: equal consoles with stored figures first; the gate programs and fake agents with a platform each
 
 No agent change, no new port, no schema change, no new setting. Two parts.
@@ -91,6 +114,17 @@ No agent change, no new port, no new route, no table, no setting. New fields onl
 - **A request row names its profile.** The Model column of the Requests page, the Overview's runs and Activity's recent requests prints the profile's shown name ("TEST - p4-qwen4b-107" for a test profile) with the model's short name beside it ("· qwen3.5-4b"), instead of the model's short name and context ("qwen3.5-4b:2k"), which read like a production profile id that does not exist. A run-scoped profile is named by its production profile with "@<scope>". A request whose profile the configuration no longer has prints its stored id with "profile no longer exists". The Requests page's Model filter lists the shown names. Activity now reads the catalog for the names (names only, no live plans), as Requests and the Overview do.
 - **A need written in the profile is shown whatever the plan says.** A plan that rejects or backs off before placing (a forced or local-only profile on an excluded or paused machine, a gone forced node, a back-off) now carries the profile's need: `POST /api/plan` `need_mib` and `need_basis`, the profile entries of `GET /api/profiles` and `GET /api/models` `needs_mib`. The entries gain `needs_written` (true when the need is `needs_mib` written by hand). The Models list says "~5.3 GB, set by hand" with the reason under it ("Runs only on host-1, which is excluded"); the panel says the same. The placement page and a zone's plan show the need beside the refusal. A dash stays for a need nobody knows.
 - A tab left open on the Models page no longer doubles the plan rounds after a scheduler restart (the restart fix of the previous section, now in an image): one page open by another browser costs one round of plans, and that round is the standing tab's catalog too.
+
+## build-86 — Scheduler image: test profiles apart, Promote and Demote, and a model's standard profiles (profiles slice B2)
+
+No agent change, no new port, no table, no setting, no migration. New routes: `GET /api/profiles/test`, `GET` and `POST /api/models/{file}/standard-set`, `POST /api/config/profiles/{id}/promote` and `/demote`.
+
+- **`stage` and `display_name` are written.** Profile create and update take them; an update that leaves both out keeps the stored ones (before, a write that set them was refused). Generated profiles are written with stage `test`. A stored stage, display name and description are kept when a profile is ensured again.
+- **Promote and Demote.** `POST /api/config/profiles/{id}/promote` and `/demote` (permission **settings**) set the stage with a required comment and an audit entry (`promote`, `demote`); a profile that already has that stage is not written.
+- **Test profiles.** `GET /api/profiles/test` (permission **observe**): one row per test profile with its shown name, id, model, the context it really runs at (the trained context when the written one is above it), why it is test (marked, generated, forced zones), the benchmarks and groups that name it, and its last load, unload or benchmark step in the history kept; counts by model and by reason.
+- **A model's standard set.** `GET /api/models/{file}/standard-set` (permission **observe**, `?short=` for the name): candidate contexts from 16k to 256k, capped at the trained context (16k and 32k when none is known), each planned read only on an idle pool (every loaded instance offered as a victim, the machines' limits kept); a row is kept when it fits there, and the plan of now is said beside it. Each row: id, context, kept or not with the plan's own reason, zones, the need and its source (measured for this shape, derived, estimate, unknown), the host memory in plain words, and whether it exists. The name is the file's production family, else the file's name, and is checked against the id rules and other files' profiles and aliases. `POST` (permission **settings**, required comment, `ids`): writes only the chosen kept rows that do not exist yet, in one revision, as automatic production profiles described "standard set"; it never edits a profile.
+- **Web UI.** Every profile is shown by its shown name ("TEST - <name>" for a test profile), in the Profiles, Models, Zones and Placement pages. Settings gains Test profiles (filters by model and reason, a search, pages of 25, Promote on each row). A profile's panel has Promote or Demote; after a promote its title and stage follow without a reload. A model's panel has "Make standard profiles": the read first, a name field, one tick box per row, the notes under each row, a required comment, "Write N profiles".
+- **Going back:** the image before reads every stored field this one writes. It refuses a profile write that changes `stage` or `display_name`, and has none of the new routes.
 
 ## Web UI: benchmark pages, second round; one round of plans per page open; a calmer status loop
 
@@ -193,6 +227,15 @@ The model server caps every slot at the model's trained context (`<arch>.context
 - **Context fill.** Before its first turn, a `context_fill` phase reads `ctx_served`. If it is below the plan's ctx, the phase refuses before any request is sent. The result gains `ctx_served` and `ctx_note`. A machine with no sample time now says `no_sample_time` ("no sample time" in the report), not `stale`.
 - **Test tools.** fakellama gains `FAKELLAMA_TRAINED_CTX`, which caps `/props` like the real server; `--override-kv` lifts the cap.
 - **Going back.** An older image keeps the plan at the configured ctx. If a stored profile sets `ctx_above_trained`, the older image reads the stored configuration with that field ignored: it is listed as unknown (`internal/cfgsvc/service.go`), and configuration writes are refused unless forced. Remove the field before going back if writes must work.
+
+## build-78 — Scheduler image: the live model list computes plans on a change, not on every heartbeat
+
+No agent change, no new port, no table, no setting, no migration. REST (`GET /api/models`, `GET /api/profiles`, `POST /api/plan`) is unchanged.
+
+- **Why.** With one page open, the live channel's model list computed every profile's plan every 2 seconds, because memory figures move with each heartbeat: about 150 scheduler loop steps a second with 300 profiles.
+- **Plans are kept and computed again only on a change:** the configuration, a plan fact (nodes, instances, learned needs, backoffs, quarantines), a node's free memory moving by 1 GiB, or after 60 seconds of drift.
+- **Only for those who read it.** The list is rebuilt only for clients of the `models` topic, and the pages subscribe to it only on screens that draw the list live.
+- **Runbook:** loop steps per second with one page open, as a readiness figure.
 
 ## Scheduler image: a run-scoped instance counts only for itself
 

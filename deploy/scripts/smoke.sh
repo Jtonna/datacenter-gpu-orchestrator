@@ -64,7 +64,7 @@ while IFS= read -r p; do
 done < "$PROFILES"
 
 if [ -n "$LOAD_MODEL" ]; then
-  echo "== one tiny chat completion on $LOAD_MODEL (this loads it; a cold PS5 load can take many minutes)"
+  echo "== one tiny chat completion on $LOAD_MODEL (this loads it; a cold load over a slow link can take many minutes)"
   START="$(date +%s)"
   RESP="$(curl -sS --max-time 3600 -H 'Content-Type: application/json' \
     -d "{\"model\":\"$LOAD_MODEL\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in five words.\"}]}" \

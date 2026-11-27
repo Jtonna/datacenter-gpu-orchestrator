@@ -1,7 +1,7 @@
 # Hardware checks (design 3.2 H1-H3, design 11 "On hardware")
 
 Run on the host machine with the scheduler container up (`container_name: potluck`).
-Rules: the PS5 or Nvidia laptop under test must be idle (a busy `rpc-server` makes
+Rules: the shared-memory worker or Nvidia laptop under test must be idle (a busy `rpc-server` makes
 `--list-devices` block forever, so every command is wrapped in `timeout`).
 Nothing here is destructive except check 8 (you power a worker off on purpose).
 Record each result in the table at the bottom.
@@ -24,7 +24,7 @@ Expect: no output.
 
 ## H2. Each worker exposes exactly one device
 
-Run once per worker (PS5 `192.0.2.2:50052`, Nvidia laptop `192.0.2.3:50052`, any other PS5):
+Run once per worker (shared-memory worker `192.0.2.2:50052`, Nvidia laptop `192.0.2.3:50052`, any other worker):
 
 ```sh
 docker exec potluck timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices | grep -c '^ *RPC'
@@ -47,7 +47,7 @@ must run without `CUDA_VISIBLE_DEVICES` (design H3 fallback): this is a code
 change, report it to the engineer; do not work around it on the box.
 Compare with the same command without the variable to see the difference.
 
-## 4. PS5 usable memory (design 13 item 2)
+## 4. Usable memory of a shared-memory worker (design 13 item 2)
 
 ```sh
 docker exec potluck timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices
@@ -56,9 +56,9 @@ docker exec potluck timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-dev
 Note the `<free> MiB free` figure. Sources disagree (12 GB, 14.1 GB, 14948 MiB).
 Later, after a load, compare it with what the model really took (check 7).
 
-## 5. `--device` and `--tensor-split` behaviour on a PS5 pool
+## 5. `--device` and `--tensor-split` behaviour on a pool of shared-memory workers
 
-Needs two PS5s (or one PS5 and the Nvidia laptop) online. Use a forced profile
+Needs two shared-memory workers (or one and the Nvidia laptop) online. Use a forced profile
 (for example the `gemma-measure` template in `config.yaml`).
 
 ```sh
@@ -76,7 +76,7 @@ order written).
 ## 6. Cold and warm load timing
 
 ```sh
-M=gemma-4-12b:64k   # any profile that lands on a PS5
+M=gemma-4-12b:64k   # any profile that lands on a shared-memory worker
 time curl -s -H 'Content-Type: application/json' -d "{\"model\":\"$M\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" http://127.0.0.1:3122/v1/chat/completions >/dev/null
 curl -s -X POST -H 'Content-Type: application/json' -d "{\"model\":\"$M\"}" http://127.0.0.1:3122/api/unload
 sleep 15
@@ -84,7 +84,7 @@ time curl -s -H 'Content-Type: application/json' -d "{\"model\":\"$M\",\"max_tok
 ```
 
 Expect: the first (cold) run is bounded by the link: file size / 11 MB/s
-(about 7 min per 5 GB sent to a PS5); the second (warm) is shorter because of
+(about 7 min per 5 GB sent over a slow link); the second (warm) is shorter because of
 the worker's `-c` tensor cache. Compare the cold time with the load timeout
 the scheduler computed (design 7.6: it must be comfortably above it).
 Whether the cache really shortens repeat loads is an open point: record it.
@@ -104,9 +104,9 @@ Expect (design 8.4): the instance goes to `stopping` after the node has been
 offline in the fleet view for 30 s, in-flight requests fail, no hang.
 
 ```sh
-# 1. start a long generation on a model placed on the PS5 (note which node)
+# 1. start a long generation on a model placed on a shared-memory worker (note which node)
 curl -N -H 'Content-Type: application/json' -d '{"model":"gemma-4-12b","stream":true,"max_tokens":2000,"messages":[{"role":"user","content":"Write a long story."}]}' http://127.0.0.1:3122/v1/chat/completions
-# 2. in another shell, power the worker off (PS5 or Nvidia laptop), then watch:
+# 2. in another shell, power the worker off (a shared-memory worker or the Nvidia laptop), then watch:
 watch -n 5 "curl -s http://127.0.0.1:3122/running; echo; docker logs --tail 5 potluck"
 ```
 
@@ -143,7 +143,7 @@ leftover claims or queue entries once everything is idle. Count the 503s.
 | H1 | | | |
 | H2 (per worker) | | | |
 | H3 | | | |
-| PS5 free MiB | | | |
+| Shared-memory worker free MiB | | | |
 | Pool order and split | | | |
 | Cold / warm load | | | |
 | Estimate vs observed | | | |

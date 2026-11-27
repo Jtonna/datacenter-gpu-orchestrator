@@ -7,13 +7,14 @@
 # paths: they are not imported, they are set by flags or LLM_SCHEDULER_* variables.
 # Nodes are not listed here: each worker runs potluck-agent and registers itself
 # (membership agents). This file only says how to rank them (tiers) and what to
-# run on them (profiles). No fleet console is needed: the fleet and recovery
+# run on them (profiles). No other node source is needed: the fleet and recovery
 # sections of older files are not used with membership agents.
 #
 # Example pool used below: one host machine with an Nvidia GPU (host-1, where the
-# scheduler runs), Nvidia laptops (laptop-1, ...) and consoles whose GPU memory is
-# system RAM. The consoles are matched by the platform their agent registers with,
-# so a console that gets a new hostname still lands in its tier.
+# scheduler runs), machines with their own GPU memory (laptop-1, ...) and machines
+# whose GPU memory is system RAM. Those are matched by the platform their agent
+# registers with, so a machine that gets a new hostname at each boot still lands
+# in its tier.
 
 listen: ":8080"                    # address the scheduler's HTTP API listens on (compose maps it to 3122)
 local_node: host-1                 # the node name of the machine the scheduler runs on (no_auto_nodes, exclude_nodes and force_nodes can name it)
@@ -73,14 +74,14 @@ defaults:
   # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight
 
 tiers:                     # how nodes are ranked. First match wins; a node matching no tier is never used
-  - match: { platform: "linux-amd64-vulkan" }   # the platform an agent registered with (exact): the consoles
+  - match: { platform: "linux-amd64-vulkan" }   # the platform an agent registered with (exact): here, machines whose GPU memory is system RAM (integrated GPUs)
     priority: 1            # lower is preferred: models go to these nodes first
     headroom_mib: 1024     # memory kept free on each node of this tier
     shared_memory: true    # the node's GPU memory is system RAM
     link_mb_s: 100         # link speed in MB/s, used to size load timeouts
     settle: 3s             # how long a node is unusable after an instance releases it
     # A tier can also match a device an agent reports (a case-insensitive glob), for example
-    # match: { platform: "linux-amd64-vulkan", device: "AMD Custom GPU*" }
+    # match: { platform: "linux-amd64-vulkan", device: "*Radeon*" }
   - match: { hostname: "laptop-*" }   # a CUDA laptop, by its hostname (a case-insensitive glob)
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
@@ -97,7 +98,7 @@ tiers:                     # how nodes are ranked. First match wins; a node matc
 # it still shows in /api/status (excluded: true). Excluding wins over force_nodes.
 # Excluding the local node (host-1) means the host machine's GPU is never used.
 # exclude_nodes:
-#   - console-test*
+#   - node-test*
 
 # Optional: nodes for forced profiles only. Same entries and matching as
 # exclude_nodes. Automatic placement never picks such a node and never evicts
@@ -125,7 +126,7 @@ profiles:                  # what clients can ask for; the key is the model name
     kv_quant: q8_0         # key-value cache precision: f16 (default), q8_0 or q4_0; q8_0 and q4_0 need flash_attn
     flash_attn: true       # turn flash attention on
     allow_tiers: [1, 2]    # tier priorities this profile may use; empty means all
-    # force_nodes: [console-1, console-2]   # node ids or hostnames, in device order, instead of automatic placement
+    # force_nodes: [node-1, node-2]         # node ids or hostnames, in device order, instead of automatic placement
     # tensor_split: [50, 50]                # explicit split weights, one per forced node
 
 # Benchmarks (docs/benchmark-guide.md): test cases and groups of them ("suites") that the

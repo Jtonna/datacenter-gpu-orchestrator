@@ -138,7 +138,7 @@ func accessDocTable() string {
 		label := access.Label(sc)
 		switch sc {
 		case access.Agents:
-			label = "Console agents' protocol"
+			label = "Agents' protocol"
 		case access.ModelAPI:
 			label = "Model API (a key there is checked for validity only)"
 		case access.Open:

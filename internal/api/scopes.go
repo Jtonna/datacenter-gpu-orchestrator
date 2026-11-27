@@ -37,7 +37,7 @@ var routeScopes = map[string]access.Scope{
 	"/upstream/{model}":           access.ModelAPI,
 	"/upstream/{model}/{rest...}": access.ModelAPI,
 
-	// the console agents' protocol: they call without a key
+	// the agents' protocol: they call without a key
 	"POST " + agentproto.PathRegister:                    access.Agents,
 	"GET " + agentproto.PathRelease:                      access.Agents,
 	"POST /api/pool/nodes/{id}/heartbeat":                access.Agents,
