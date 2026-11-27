@@ -283,3 +283,45 @@ func TestRealRecordingReplays(t *testing.T) {
 		t.Errorf("derived plan: %v", p)
 	}
 }
+
+// The bare scenario (an empty database, the built-in defaults) still starts
+// after the built-in membership became agents (build-92): the harness runs its
+// scheduler in fleet membership on its fake fleet. The server answers, says
+// it is not configured, and its fleet view is live. (Its view has no nodes,
+// as before build-92: 9f65dba shows the same.)
+func TestHarnessBareStarts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts the full harness")
+	}
+	c, err := startCluster(quiet, clusterOpts{bare: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		st, err := c.sched.Status(ctx)
+		if err == nil && st.View.Connected && !st.View.Stale {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the bare cluster's fleet view never became live (%v)", err)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	resp, err := http.Get(c.url + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var m map[string]any
+	json.NewDecoder(resp.Body).Decode(&m)
+	if resp.StatusCode != 200 || m["configured"] != false {
+		t.Fatalf("GET /api/status: %d, configured %v", resp.StatusCode, m["configured"])
+	}
+	if m["membership"] != nil && m["membership"] != "fleet" {
+		t.Errorf("membership %v, want fleet (the harness's fake fleet)", m["membership"])
+	}
+}

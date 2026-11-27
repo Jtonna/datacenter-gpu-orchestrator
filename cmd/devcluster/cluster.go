@@ -230,6 +230,10 @@ func startCluster(log *slog.Logger, o clusterOpts) (*cluster, error) {
 	if o.bare { // the built-in defaults name no fleet; the fake one stands in so the nodes show
 		cp := *cfg
 		cp.Fleet.URL, cp.Fleet.LocalNode = c.fleet.URL(), hostNode.Host
+		// the built-in default membership is agents (build-92); this harness's
+		// nodes come from its fake fleet, so it starts in the legacy fleet
+		// membership (read at start only)
+		cp.Defaults.Membership = config.MembershipFleet
 		fcfg = &cp
 	}
 	c.fc = fleet.New(fcfg, fleet.Options{Logger: log})
@@ -265,7 +269,7 @@ func startCluster(log *slog.Logger, o clusterOpts) (*cluster, error) {
 	if c.hist.On() {
 		so.History = c.hist
 	}
-	if c.sched, err = scheduler.New(cfg, so); err != nil {
+	if c.sched, err = scheduler.New(fcfg, so); err != nil {
 		return nil, err
 	}
 	c.schedDone = make(chan struct{})
@@ -476,6 +480,7 @@ func clusterYAML(fleetURL, fake string) string {
 	return fmt.Sprintf(`fleet: {url: %q, local_node: host-1, stale_after: 60s}
 local_probe_cmd: "%s --nvidia-smi 8151 0"
 defaults:
+  membership: fleet # the nodes come from the harness's fake fleet; the built-in default is agents (build-92)
   ttl: 300s
   min_hold: 30s
   max_hold: 900s
