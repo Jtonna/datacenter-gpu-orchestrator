@@ -152,17 +152,21 @@ export const resultWord = r => RESULT_WORD[resultOf(r)] || resultOf(r);
 export function dots(c, running) {
   if (!c) return h('span.mut', { title: 'This scheduler does not count the results of a run (older than benchmarks slice 2).' }, DASH);
   const passed = (c.passed || 0) + (c.with_issues || 0);
-  const failed = (c.failed || 0) + (c.cancelled || 0);
+  // red is what failed; cancelled and skipped steps are a neutral "not run"
+  const failed = c.failed || 0;
+  const notRun = (c.cancelled || 0) + (c.skipped || 0);
   const out = [];
   if (running) {
     out.push(h('span.bp-dot.ok', { title: plural(passed, 'run') + ' passed' }, `${num(passed)} passed`));
     if (failed) out.push(h('span.bp-dot.bad', { title: plural(failed, 'run') + ' failed' }, num(failed)));
     if (c.refused) out.push(h('span.bp-dot.ref', { title: plural(c.refused, 'run') + ' refused' }, num(c.refused)));
+    if (notRun) out.push(h('span.bp-dot.notrun', { title: `${num(notRun)} not run` }, num(notRun)));
     out.push(h('span.mut', { title: plural(c.to_go || 0, 'run') + ' to go' }, `${num(c.to_go || 0)} to go`));
   } else {
     out.push(h('span.bp-dot.ok', { title: `${num(passed)} passed` }, num(passed)));
     if (failed) out.push(h('span.bp-dot.bad', { title: `${num(failed)} failed` }, num(failed)));
     if (c.refused) out.push(h('span.bp-dot.ref', { title: `${num(c.refused)} refused` }, num(c.refused)));
+    if (notRun) out.push(h('span.bp-dot.notrun', { title: `${num(notRun)} not run` }, num(notRun)));
   }
   return h('span.bp-dots', out);
 }
@@ -304,6 +308,5 @@ export const WHY = {
   b10: 'comparing two runs has no route and no mockup of its view yet (route: benchmarks slice 5, B10; the view waits for a mockup)',
   b11: 'what stopped a run (a machine dropping out) is not read from the history yet (benchmarks slice 5: B11)',
   b13: 'one-click PDF is not served yet: open the full report and print it (benchmarks slice 5: B13)',
-  edit: 'the group and benchmark editors have no mockup yet; they are built after the owner draws them',
-  run: 'starting, cancelling and repeating runs from these pages is run control (benchmarks slice 6)',
+  recipe: 'a recipe asks for its inputs (model, placement, context) before it runs, and that dialog has no mockup yet (benchmarks slice 6 drew the run dialog without inputs)',
 };

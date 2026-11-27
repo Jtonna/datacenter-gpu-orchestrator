@@ -12,10 +12,21 @@
 //           two groups, one benchmark over 12 models and 2 placements), five
 //           benchmarks, 49 runs served 12 at a time (offset, limit, total;
 //           kind= and result= filter), the newest one running.
+//   runcancel  the boards plus Run and Cancel (board bench-run/run-cancel):
+//           the board's plain benchmarks and groups, a run on step 2 of 5
+//           with two queued behind it, a cancelled run; the POSTs of a run
+//           (its dry read and its start) and of a cancel answer (rcPost).
+//   runwait  runcancel with the run waiting until idle.
+//   editors  runcancel plus the editors (board bench-editors): the schema
+//           (bench-schema.json, the server's own; a Go test keeps it equal),
+//           one benchmark's GET, the task sets, the plan of the board's
+//           profiles, and the saves (edWrite: a comment required, a few of
+//           the server's refusals with their sentences and problems).
 
+import { readFileSync } from 'node:fs';
 import { TPL } from './bench-tpl.mjs';
 
-export const BENCH_STATES = ['long', 'boards'];
+export const BENCH_STATES = ['long', 'boards', 'runcancel', 'runwait', 'editors'];
 
 export const LONG = {
   suiteDesc: 'Measures load times and answer speed on the consoles with a cold page cache and again with a warm one, so the two can be compared run by run. Every step drops the caches first; the note of each run says which file was dropped from the share and on which consoles the drop was done before it.',
@@ -103,12 +114,12 @@ const MODELS = ['qwen3.5-4b-q4_k_m.gguf', 'gemma-4-12b-q4_k_m.gguf', 'deepseek-v
 const ph = (type, o = {}) => Object.assign({ type }, o);
 const BENCHES = [
   { id: 'cold-response-repeat', name: 'Cold load, response and repeat', phases: [ph('load', { cold: true }), ph('warmup', { count: 1 }), ph('requests', { requests: [{ name: 'a', prompt: 'x' }, { name: 'b', prompt: 'y' }], repeats: 3 }),
-    ph('unload'), ph('load'), ph('requests', { requests: [{ name: 'a', prompt: 'x' }, { name: 'b', prompt: 'y' }], repeats: 3 }), ph('unload')], recipe: true },
-  { id: 'cold-load', name: 'Cold load', phases: [ph('load', { cold: true }), ph('unload')], recipe: true },
-  { id: 'fill-context', name: 'Fill the context', phases: [ph('load'), ph('conversation', { fill_pct: 90 }), ph('unload')], recipe: true },
-  { id: 'cold-first-token', name: 'Cold load and first token', phases: [ph('load', { cold: true }), ph('warmup', { count: 1 }), ph('unload')], recipe: true },
-  { id: 'eight-at-once', name: 'Eight at once', phases: [ph('load'), ph('concurrent_requests', { n: 8 }), ph('unload')], recipe: true },
-  { id: 'coding-tasks', name: 'Coding tasks', phases: [ph('load'), ph('tasks'), ph('unload')], recipe: true },
+    ph('unload'), ph('load'), ph('requests', { requests: [{ name: 'a', prompt: 'x' }, { name: 'b', prompt: 'y' }], repeats: 3 }), ph('unload')], recipe: true, inputs: { ctx: 8192 } },
+  { id: 'cold-load', name: 'Cold load', phases: [ph('load', { cold: true }), ph('unload')], recipe: true, inputs: { ctx: 8192 } },
+  { id: 'fill-context', name: 'Fill the context', phases: [ph('load'), ph('conversation', { fill_pct: 90 }), ph('unload')], recipe: true, inputs: { ctx: 8192 } },
+  { id: 'cold-first-token', name: 'Cold load and first token', phases: [ph('load', { cold: true }), ph('warmup', { count: 1 }), ph('unload')], recipe: true, inputs: { ctx: 8192 } },
+  { id: 'eight-at-once', name: 'Eight at once', phases: [ph('load'), ph('concurrent_requests', { n: 8 }), ph('unload')], recipe: true, inputs: { ctx: 8192 } },
+  { id: 'coding-tasks', name: 'Coding tasks', phases: [ph('load'), ph('tasks'), ph('unload')], recipe: true, inputs: { ctx: 8192 } },
 ];
 const GROUPS = [
   { id: 'full-pass', name: 'Full pass', benchmarks: [{ group: 'all-load' }, { group: 'all-coding' }], expanded_count: 96, stop_on_failure: false, only_when_idle: true },
@@ -270,20 +281,21 @@ function boardResults(now, q) {
   return { ctx: ctx ? Number(ctx) : 0, run: run ? 'run-' + run : '', contexts: [4096, 8192], models };
 }
 
-function boardsRoute(p, q, now) {
-  const runs = boardRuns(now);
-  const lastOf = id => runs.find(r => r.suite_id === id && r.state !== 'running') || null;
-  const groups = GROUPS.map(g => Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(g), lastOf(g.id) ? { last_run: lastOf(g.id) } : {}));
+function boardsRoute(p, q, now, rc = '') {
+  const runs = rc ? rcRuns(now, rc === 'runwait') : boardRuns(now);
+  const lastOf = id => runs.find(r => r.suite_id === id && !['running', 'queued', 'paused'].includes(r.state)) || null;
+  const groups = (rc ? RC_GROUPS.concat(GROUPS) : GROUPS).map(g => Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(g), lastOf(g.id) ? { last_run: lastOf(g.id) } : {}));
   const lastUse = { 'cold-response-repeat': { run_id: 'run-47', run_number: 47, step: 0, at: runs[2].started_at, outcome: 'ready', duration_s: 232 },
     'cold-load': { run_id: 'run-43', run_number: 43, step: 0, at: runs[6].started_at, outcome: 'failed', duration_s: 2.2 },
     'fill-context': { run_id: 'run-44', run_number: 44, step: 0, at: runs[5].started_at, outcome: 'ready', duration_s: 1450 } };
-  const benches = BENCHES.map(b => Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(b), lastUse[b.id] ? { last_use: lastUse[b.id] } : {}));
+  const benches = (rc ? RC_BENCHES.concat(BENCHES) : BENCHES).map(b => Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(b), lastUse[b.id] ? { last_use: lastUse[b.id] } : {}));
   const running = runs[0];
   const progress = { id: running.id, suite_id: running.suite_id, suite_name: running.suite_name, state: 'running', percent: 9.4, started_at: running.started_at, elapsed_s: 41 * 60, eta_s: 6 * 3600,
     steps_total: 96, steps_done: 9, counts: running.counts, next: null, queue: [],
     current: { index: 9, benchmark_id: 'cold-response-repeat', name: 'Cold load, response and repeat', profile: 'bench-devstral', model_file: MODELS[3], nodes: ['console-01', 'console-02', 'console-03', 'console-04', 'console-05', 'console-06'],
       percent: 40, placement: 'all', phase: { index: 2, type: 'requests', label: 'Requests', phases_total: 7 } } };
-  if (p === '/api/bench/state') return { current: null, enabled: true, next_scheduled: [], queue: [], run: progress };
+  if (p === '/api/bench/state') return rc ? { current: null, enabled: true, next_scheduled: [], queue: runs.filter(r => r.state === 'queued').reverse().map(brief), run: rcProgress(now, rc === 'runwait') }
+    : { current: null, enabled: true, next_scheduled: [], queue: [], run: progress };
   if (p === '/api/bench/groups' || p === '/api/bench/suites') return { [p.endsWith('groups') ? 'groups' : 'suites']: groups };
   let m = /^\/api\/bench\/(?:groups|suites)\/([^/]+)(\/expand)?$/.exec(p);
   if (m) {
@@ -296,7 +308,11 @@ function boardsRoute(p, q, now) {
   if (p === '/api/bench/results/models') return boardResults(now, q);
   if (p === '/api/bench/runs') return paged(runs, q);
   m = /^\/api\/bench\/runs\/([^/]+)$/.exec(p);
-  if (m) { const r = runs.find(x => x.id === m[1] || String(x.number) === m[1]); return r ? boardRunDetail(r) : undefined; }
+  if (m) {
+    const r = runs.find(x => x.id === m[1] || String(x.number) === m[1]);
+    if (r && rc && r.number >= 51) return rcRunDetail(r, now);
+    return r ? boardRunDetail(r) : undefined;
+  }
   m = /^\/api\/bench\/runs\/([^/]+)\/report$/.exec(p);
   if (m) {
     const step = parseInt((q && q.get('step')) || '0', 10);
@@ -309,6 +325,243 @@ function boardsRoute(p, q, now) {
 
 export function benchRoute(state, p, q, now = Date.now()) {
   if (!state) return null;
+  if (state === 'editors') return edRoute(p, q, now);
+  if (state === 'runcancel' || state === 'runwait') return boardsRoute(p, q, now, state);
   return state === 'boards' ? boardsRoute(p, q, now) : longRoute(p, q, now);
 }
+
+// the runs of the runcancel states: run 52's first step passed (the 1-console
+// load), its second is loading; the cancelled run 51's one step cancelled
+function rcRunDetail(r, now) {
+  const run = clone(r);
+  const step = (idx, n, o) => Object.assign({ idx, slug: `qwen4b-${n}con`, benchmark_id: `qwen4b-${n}con`, name: RC_BENCHES[n - 1].name, profile: rcProfile(n), model_file: QWEN, node_count: n,
+    spec: { id: `qwen4b-${n}con`, name: RC_BENCHES[n - 1].name, phases: RC_BENCHES[n - 1].phases } }, o);
+  if (r.id === 'run-52' && r.state === 'running') {
+    run.steps = [step(0, 1, { state: 'done', outcome: 'ready', started_at: now - 2 * MIN, finished_at: now - 65e3, load: { outcome: 'ready', load_s: 8.4, memory_mib: 3400 },
+      stats: { requests: 3, failed: 0, decode_tps: { n: 3, mean: 48.2, median: 48, min: 47, max: 49 } }, phases: [] }),
+    step(1, 2, { state: 'running', outcome: '', started_at: now - 18e3, phases: [] })];
+  } else if (r.id === 'run-51') {
+    run.steps = [step(0, 2, { state: 'done', outcome: 'cancelled', error: 'cancelled while the model was loading', started_at: r.started_at, finished_at: r.finished_at, phases: [] })];
+  } else run.steps = [];
+  return run;
+}
+
+// ---------- --bench runcancel: Run and Cancel (board bench-run/run-cancel) ----------
+//
+// The boards' answers, plus the board's plain benchmarks and groups: "Qwen 4B
+// load and requests" on 1 to 5 consoles, the group of the five (S3a), a
+// reference group the setting bench_not_startable names (S1), a smoke test.
+// Run 52 (S3a) is on step 2 of 5, loading on ps5-01 and ps5-02; runs 53 and
+// 54 are queued behind it; run 51 was cancelled. POST .../run answers the dry
+// read (?dry_run=1) and the start; POST /api/bench/runs/<id>/cancel the cancel.
+// "runwait": the same, run 52 waiting until idle.
+
+const mac2 = n => '02:00:00:00:00:' + String(n).padStart(2, '0');
+const CONSOLES = ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04', 'ps5-05'];
+const QWEN = 'qwen3.5-4b-q4_k_m.gguf';
+const rcProfile = n => (n === 1 ? 'qwen3.5-4b:16k' : `test-s3-qwen4b-${n}con`);
+const rcShown = n => (n === 1 ? 'qwen3.5-4b:16k' : `TEST - s3-qwen4b-${n}con`);
+const RC_BENCHES = [1, 2, 3, 4, 5].map(n => ({ id: `qwen4b-${n}con`, name: n === 1 ? 'Qwen 4B load and requests, 1 console' : `Qwen 4B, ${n} consoles`, profile: rcProfile(n),
+  phases: [ph('load'), ph('warmup', { count: 1 }), ph('requests', { requests: [{ name: 'a', prompt: 'x' }], repeats: 3 }), ph('unload')] }))
+  .concat([{ id: 'host-gpu-alone', name: 'Qwen 4B, host GPU alone', profile: 'test-s1-qwen4b-host', phases: [ph('load'), ph('requests', { requests: [{ name: 'a', prompt: 'x' }] }), ph('unload')] }]);
+const RC_GROUPS = [
+  { id: 's3a', name: 'S3a console workers only, 1 to 5 consoles, Qwen 4B', benchmarks: [1, 2, 3, 4, 5].map(n => `qwen4b-${n}con`), expanded_count: 5, cooldown_s: 10,
+    only_when_idle: true, evict_others: true, stop_on_failure: false },
+  { id: 's1-ref', name: 'S1 host GPU alone (reference)', benchmarks: ['host-gpu-alone'], expanded_count: 1, only_when_idle: true, not_startable: 'listed in bench_not_startable (Settings)' },
+  { id: 'smoke', name: 'Smoke test', benchmarks: ['qwen4b-1con', 'qwen4b-2con', 'qwen4b-3con'], expanded_count: 3, only_when_idle: true },
+];
+
+function rcRuns(now, waiting) {
+  const T = m => now - m * MIN;
+  const base = boardRuns(now).map(r => (r.id === 'run-49' ? Object.assign({}, r, { state: 'completed', result: 'passed', finished_at: T(3),
+    counts: counts({ steps: 96, done: 96, completed: 96, passed: 96 }) }) : r));
+  const mk = o => Object.assign({ trigger: 'manual', pinned: false, version: '0.1.9', kind: 'suite' }, o);
+  return [
+    mk({ id: 'run-54', number: 54, kind: 'benchmark', benchmark_id: 'qwen4b-1con', suite_id: '', suite_name: 'Qwen 4B load and requests, 1 console', state: 'queued', result: 'queued', queued_at: T(0.5), started_at: 0 }),
+    mk({ id: 'run-53', number: 53, suite_id: 'smoke', suite_name: 'Smoke test', state: 'queued', result: 'queued', queued_at: T(1), started_at: 0 }),
+    mk({ id: 'run-52', number: 52, suite_id: 's3a', suite_name: 'S3a console workers only, 1 to 5 consoles, Qwen 4B', state: waiting ? 'paused' : 'running', result: waiting ? 'waiting' : 'running',
+      queued_at: T(2.2), started_at: T(2.1), note: 'Re-run of S3a after the rename', started_by: 'anonymous', start_comment: 'Re-run of S3a after the rename',
+      counts: counts(waiting ? { steps: 5, done: 0, to_go: 5 } : { steps: 5, done: 1, to_go: 4, completed: 1, passed: 1 }) }),
+    mk({ id: 'run-51', number: 51, kind: 'benchmark', benchmark_id: 'qwen4b-2con', suite_id: '', suite_name: 'Qwen 4B, 2 consoles', state: 'cancelled', result: 'cancelled',
+      queued_at: T(30), started_at: T(30), finished_at: T(30) + 21e3, error: 'cancelled at step 1 of 1 by anonymous: "wrong zones"', started_by: 'anonymous', counts: counts({ cancelled: 1 }) }),
+  ].concat(base.filter(r => r.number < 51));
+}
+function rcProgress(now, waiting) {
+  const r = { id: 'run-52', suite_id: 's3a', suite_name: 'S3a console workers only, 1 to 5 consoles, Qwen 4B', started_at: now - 2.1 * MIN, elapsed_s: 124, eta_s: null,
+    steps_total: 5, steps_done: waiting ? 0 : 1, next: null, queue: [] };
+  if (waiting) return Object.assign(r, { state: 'paused', percent: 0, counts: counts({ steps: 5, done: 0, to_go: 5 }), current: null,
+    paused_because: 'gemma-4-12b:64k is ready (not loaded by this run)' });
+  return Object.assign(r, { state: 'running', percent: 23, counts: counts({ steps: 5, done: 1, to_go: 4, completed: 1, passed: 1 }),
+    current: { index: 1, benchmark_id: 'qwen4b-2con', name: 'Qwen 4B, 2 consoles', profile: rcProfile(2), profile_name: rcShown(2), model_file: QWEN, nodes: ['ps5-01', 'ps5-02'], percent: 40, placement: '',
+      phase: { index: 0, type: 'load', label: 'Load', phases_total: 4 } } });
+}
+const brief = r => ({ id: r.id, suite_id: r.suite_id, suite_name: r.suite_name, state: r.state, trigger: 'manual', queued_at: r.queued_at, started_at: 0, finished_at: 0, kind: r.kind,
+  benchmark_id: r.benchmark_id || undefined });
+
+const GEMMA = { profile: 'gemma-4-12b:64k', profile_name: 'gemma-4-12b:64k', machines: ['ps5-01'], state: 'ready', in_flight: 0, idle_s: 180, by: 'chat-ui' };
+function rcLoad(n, fits) {
+  const ms = CONSOLES.slice(0, n).map((name, i) => ({ id: mac2(i + 1), name, takes_mib: Math.round(3400 / n) }));
+  return { profile: rcProfile(n), profile_name: rcShown(n), model: QWEN, model_name: 'Qwen 3.5 4B', steps: 1, machines: ms, need_mib: 3400, need_known: true,
+    action: fits ? 'start' : 'queue', reason: fits ? '' : 'gemma-4-12b:64k is loaded on ps5-01', fits: fits ? 'fits' : 'waits' };
+}
+// Run again (again_of): a definition changed since that run is a warning, not a refusal
+const withAgain = (plan, body) => {
+  if (body.again_of) plan.warnings = plan.warnings.concat([{ code: 'definition_changed', message: `changed since run ${body.again_of}: Qwen 4B, 2 consoles. This run uses the definitions as they are now` }]);
+  return plan;
+};
+const flag = (v, d) => (v === undefined || v === null ? d : !!v);
+// rcPlan(kind, id, body): the dry read of a start
+export function rcPlan(kind, id, body) {
+  body = body || {};
+  const queue = { queued: 0, max: 20 };
+  const plan = { dry_run: true, startable: true, kind: kind === 'group' ? 'suite' : 'benchmark', id, refusals: [], warnings: [], loaded_now: [], would_unload: [], queue };
+  if (kind === 'group') {
+    const g = RC_GROUPS.find(x => x.id === id) || GROUPS.find(x => x.id === id);
+    if (!g) return null;
+    const wait = flag(body.only_when_idle, g.only_when_idle !== false), evict = flag(body.evict_others, !!g.evict_others);
+    Object.assign(plan, { name: g.name, waits_for_idle: wait, evict_others: evict, max_run_minutes: 60 });
+    if (g.not_startable) {
+      plan.startable = false;
+      plan.refusals = [{ code: 'not_startable', entry: g.id, message: `the group ${g.id} is listed in bench_not_startable (Settings)` }];
+      plan.step_count = g.expanded_count; plan.steps = []; plan.loads = [];
+      return plan;
+    }
+    const ns = id === 's3a' ? [1, 2, 3, 4, 5] : [1, 2, 3];
+    plan.step_count = ns.length;
+    plan.steps = ns.map(n => ({ benchmark_id: `qwen4b-${n}con`, name: RC_BENCHES[n - 1].name, profile: rcProfile(n), profile_name: rcShown(n) }));
+    plan.loads = ns.map(n => rcLoad(n, false));
+    plan.loaded_now = [GEMMA];
+    if (!wait || evict) plan.would_unload = [Object.assign({}, GEMMA, { why: 'idle on ps5-01, a machine this run loads on' })];
+    queue.running = 'run-52';
+    queue.queued = 2;
+    return withAgain(plan, body);
+  }
+  const b = RC_BENCHES.find(x => x.id === id);
+  if (!b) return null;
+  const n = parseInt((/(\d)con$/.exec(id) || [0, 1])[1], 10);
+  Object.assign(plan, { name: b.name, waits_for_idle: flag(body.only_when_idle, true), evict_others: flag(body.evict_others, false), max_run_minutes: 12, step_count: 1,
+    steps: [{ benchmark_id: id, name: b.name, profile: b.profile, profile_name: id === 'host-gpu-alone' ? 'TEST - s1-qwen4b-host' : rcShown(n) }] });
+  if (id === 'host-gpu-alone') {
+    plan.startable = false; plan.loads = [];
+    plan.refusals = [{ code: 'scheduler_gpu', entry: b.name, machine: 'scheduler', message: `${b.name} would load test-s1-qwen4b-host on scheduler, the scheduler's own machine; benchmarks never load there, so nothing of the run was started` }];
+    return plan;
+  }
+  plan.loads = [rcLoad(n, true)];
+  return withAgain(plan, body);
+}
+// rcPost(method, path, body): {status, body} for the POSTs of the runcancel states, or null
+export function rcPost(p, q, body) {
+  body = body || {};
+  let m = /^\/api\/bench\/(groups|suites|benchmarks)\/([^/]+)\/run$/.exec(p);
+  if (m) {
+    const kind = m[1] === 'benchmarks' ? 'benchmark' : 'group';
+    const plan = rcPlan(kind, decodeURIComponent(m[2]), body);
+    if (!plan) return { status: 404, body: { error: { message: 'not found' } } };
+    const dry = q && ['1', 'true', 'yes'].includes(q.get('dry_run') || '');
+    if (dry) return { status: 200, body: plan };
+    if (!String(body.comment || '').trim()) return { status: 400, body: { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', reason: 'comment_required' } } };
+    if (plan.refusals.length) return { status: 409, body: { error: { message: plan.refusals[0].message, reason: plan.refusals[0].code }, refusals: plan.refusals } };
+    const want = plan.would_unload.map(x => x.profile).sort().join(','), got = (body.evict || []).slice().sort().join(',');
+    if (want !== got) return { status: 409, body: { error: { message: 'what this run would unload changed since it was shown: nothing was started; look at the new list and start again', reason: 'evict_set_changed' },
+      refusals: [{ code: 'evict_set_changed', message: 'what this run would unload changed since it was shown: nothing was started; look at the new list and start again' }], would_unload: plan.would_unload } };
+    return { status: 202, body: { id: 'run-55', number: 55, state: 'queued', suite_id: kind === 'group' ? plan.id : '', suite_name: plan.name, kind: plan.kind } };
+  }
+  m = /^\/api\/bench\/runs\/([^/]+)\/cancel$/.exec(p);
+  if (m) {
+    if (!String(body.comment || '').trim()) return { status: 400, body: { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', reason: 'comment_required' } } };
+    return { status: 202, body: { id: decodeURIComponent(m[1]), state: 'cancelled' } };
+  }
+  return null;
+}
+
 export const benchRunId = runId;
+
+// ---------- --bench editors: the benchmark and group editors (board bench-editors) ----------
+
+const SCHEMA = JSON.parse(readFileSync(new URL('./bench-schema.json', import.meta.url), 'utf8'));
+const ED_PROFILES = [1, 2, 3, 4, 5].map(n => ({ id: rcProfile(n), shown_name: rcShown(n), model: QWEN, model_name: 'Qwen 3.5 4B', ctx: 16384, ctx_real: 16384,
+  stage: n === 1 ? 'production' : 'test', force_nodes: n === 1 ? [] : CONSOLES.slice(0, n), aliases: [] }))
+  .concat([{ id: 'test-s1-qwen4b-host', shown_name: 'TEST - s1-qwen4b-host', model: QWEN, model_name: 'Qwen 3.5 4B', ctx: 16384, ctx_real: 16384, stage: 'test', force_nodes: ['scheduler'], aliases: [] }]);
+export const edProfiles = () => clone(ED_PROFILES);
+const TASK_SETS = [{ id: 'coding-basics', version: 2, sha256: 'a'.repeat(64), title: 'Coding basics', tasks: 12, created_at: 1795000000000, results: 4 }];
+
+function edRoute(p, q, now) {
+  if (p === '/api/bench/schema') return SCHEMA;
+  if (p === '/api/bench/task-sets') return { task_sets: TASK_SETS };
+  const m = /^\/api\/bench\/benchmarks\/([^/]+)$/.exec(p);
+  if (m) {
+    const id = decodeURIComponent(m[1]);
+    // <id>-kept: the same benchmark with settings the editor does not draw (a request's own sampling, messages)
+    const kept = /-kept$/.test(id);
+    const b = RC_BENCHES.concat(BENCHES).find(x => x.id === id.replace(/-kept$/, ''));
+    if (!b) return undefined;
+    const out = Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(b));
+    if (kept) {
+      out.id = id;
+      for (const ph of out.phases || []) for (const r of ph.requests || []) Object.assign(r, { temperature: 0.7, seed: 42 });
+      const rq = (out.phases || []).find(ph => ph.type === 'requests');
+      if (rq) rq.requests.push({ name: 'chat', messages: [{ role: 'system', content: 'Answer briefly.' }, { role: 'user', content: 'What is a bridge?' }] });
+    }
+    return out;
+  }
+  // <group>-kept: the group with a matrix entry and a schedule
+  const gm = /^\/api\/bench\/groups\/([^/]+)-kept$/.exec(p);
+  if (gm) {
+    const g = boardsRoute('/api/bench/groups/' + gm[1], q, now, 'runcancel');
+    if (g) { g.id = gm[1] + '-kept'; g.schedule = { every: '24h' }; g.benchmarks = (g.benchmarks || []).concat([{ benchmark: 'ctx-fill-recipe', matrix: { ctx: [8192, 16384] } }]); }
+    return g;
+  }
+  const d = boardsRoute(p, q, now, 'runcancel');
+  // run 51 ran qwen4b-2con, saved again since (GET /api/bench/runs/{id}: definitions_changed)
+  if (d && /^\/api\/bench\/runs\/(?:51|run-51)$/.test(p)) d.definitions_changed = [{ id: 'qwen4b-2con', name: 'Qwen 4B, 2 consoles', change: 'changed' }];
+  else if (d && /^\/api\/bench\/runs\/[^/]+$/.test(p)) d.definitions_changed = [];
+  return d;
+}
+
+// edPlan(model): POST /api/plan for the board's profiles (null: another profile)
+export function edPlan(model) {
+  const e = ED_PROFILES.find(x => x.id === model);
+  if (!e) return null;
+  if (e.id === 'test-s1-qwen4b-host') return { status: 200, body: { model, ctx: 16384, action: 'start', placement: [{ id: 'scheduler', local: true, role: 'host', share: 1 }], victims: [],
+    reason: '', excluded_by: 'scheduler', need_mib: 3400, fit_need_mib: 3400, measured: true, need_basis: 'measured, needs_mib', memory: null } };
+  const n = e.force_nodes.length || 1;
+  const names = CONSOLES.slice(0, n);
+  const take = Math.round(3400 / n);
+  return { status: 200, body: { model, ctx: 16384, action: 'start', reason: '', excluded_by: '', need_mib: 3400, fit_need_mib: 3400, measured: true, need_basis: 'measured, needs_mib',
+    placement: names.map((name, i) => ({ id: mac2(i + 1), local: false, role: i ? 'helper' : 'host', share: 1 / n })), victims: [],
+    memory: { fits: true, nodes: names.map((name, i) => ({ id: mac2(i + 1), node: name, will_take_mib: take, remains_mib: 6000 })) } } };
+}
+
+// edWrite(method, path, body): the saves. The sentences are the server's
+// (benchspec Validate / ValidateGroup, internal/api/bench.go), each with the
+// part it names (problems), as the server answers a refused save.
+const ED_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const refused = lines => ({ status: 422, body: { error: { message: lines.join('\n'), type: 'invalid_request_error', param: null, code: 422, reason: 'invalid' },
+  problems: lines.map(l => ({ path: (/^([a-z_]+(?:\[\d+\])?(?:\.[a-z_]+(?:\[\d+\])?)*)(?=[ :]|$)/.exec(l) || ['', ''])[1], message: l })) } });
+export function edWrite(method, p, body) {
+  const m = /^\/api\/bench\/(benchmarks|groups|suites)(?:\/([^/]+))?$/.exec(p);
+  if (!m || (method === 'POST') === !!m[2]) return null;
+  const comment = String(body.comment || '').trim();
+  if (!comment) return { status: 400, body: { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error', code: 400 } } };
+  const d = Object.assign({}, body);
+  delete d.comment;
+  const lines = [];
+  if (!ED_ID.test(d.id || '')) lines.push(`id "${d.id || ''}" must be 1 to 64 characters: lower-case letters, digits, '.', '-' or '_', starting with a letter or digit`);
+  if (m[1] === 'benchmarks') {
+    const known = RC_BENCHES.concat(BENCHES).map(b => b.id);
+    if (method === 'POST' && known.includes(d.id)) return { status: 409, body: { error: { message: `benchmark "${d.id}" already exists: use PUT /api/bench/benchmarks/${d.id} to replace it`, code: 409 } } };
+    if (!d.profile && !d.inputs) lines.push('profile or inputs is required: a fixed profile, or inputs (model, ctx, placement) for a recipe');
+    (d.phases || []).forEach((ph, i) => {
+      if (ph.type === 'requests' && !(ph.requests || []).length) lines.push(`phases[${i}] (requests): requests: between 1 and 64 are required`);
+      (ph.requests || []).forEach((r, k) => { if (!r.prompt && !r.messages) lines.push(`phases[${i}].requests[${k}] (${r.name || 'request-' + (k + 1)}): messages or prompt is required`); });
+    });
+    if (typeof d.timeout_s === 'number' && (d.timeout_s < 0 || d.timeout_s > 86400)) lines.push('timeout_s must be 0 to 86400');
+  } else {
+    const known = RC_GROUPS.concat(GROUPS).map(g => g.id);
+    if (method === 'POST' && known.includes(d.id)) return { status: 409, body: { error: { message: `suite "${d.id}" already exists: use PUT /api/bench/suites/${d.id} to replace it`, code: 409 } } };
+    const benches = RC_BENCHES.concat(BENCHES).map(b => b.id);
+    (d.benchmarks || []).forEach((e, i) => { if (typeof e === 'string' && !benches.includes(e)) lines.push(`benchmarks[${i}]: "${e}" is not a benchmark`); });
+  }
+  if (lines.length) return refused(lines);
+  return { status: method === 'POST' ? 201 : 200, body: Object.assign({ source: 'api', created_at: 1795000000000, updated_at: 1795000000000 }, d) };
+}

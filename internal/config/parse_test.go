@@ -33,7 +33,7 @@ func TestParseDefaultsApplied(t *testing.T) {
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
 		HostOverheadMiB: 1024, PlacementToleranceMiB: 128,
-		CtxCheckpoints: 32, // NodeHostCacheRAMMiB 0 and CountHostMemory off: today's launch, nothing counted
+		CtxCheckpoints: 32, CountHostMemory: false, // NodeHostCacheRAMMiB 0; off: counted only for a profile carrying its own flags (opt-in)
 	}
 	if d != want {
 		t.Fatalf("defaults = %+v\nwant      %+v", d, want)

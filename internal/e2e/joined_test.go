@@ -59,8 +59,8 @@ func TestJoinedSystemEndToEnd(t *testing.T) {
 		t.Fatalf("GET /api/config/profiles: %d %s", st, body)
 	}
 	c.waitFor("the new profile live", 10*time.Second, func() bool { return c.jsonGet("/api/status")["config_revision"] == 2.0 })
-	tool("create_benchmark", `{"benchmark":{"id":"joined-load","name":"Joined load","description":"cold load of the new profile","profile":"joined","phases":[{"type":"load"},{"type":"unload"}]}}`)
-	tool("create_suite", `{"suite":{"id":"joined-suite","name":"Joined","benchmarks":["joined-load"],"cooldown_s":0}}`)
+	tool("create_benchmark", `{"benchmark":{"id":"joined-load","name":"Joined load","description":"cold load of the new profile","profile":"joined","phases":[{"type":"load"},{"type":"unload"}]},"comment":"e2e"}`)
+	tool("create_suite", `{"suite":{"id":"joined-suite","name":"Joined","benchmarks":["joined-load"],"cooldown_s":0},"comment":"e2e"}`)
 
 	ws, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(c.url, "http")+"/ws", nil)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestJoinedSystemEndToEnd(t *testing.T) {
 		}
 	}()
 
-	run := tool("run_suite", `{"id":"joined-suite","note":"joined e2e","actor":"joiner"}`)
+	run := tool("run_suite", `{"id":"joined-suite","note":"joined e2e","actor":"joiner","comment":"e2e"}`)
 	id, _ := run["id"].(string)
 	if id == "" {
 		t.Fatalf("run_suite: %v", run)

@@ -38,7 +38,7 @@ func storedEnv(t *testing.T) (*Service, func(file string, n int)) {
 }
 
 func lateArgs(p *config.ProfileSpec) *config.ProfileSpec {
-	p.ExtraArgs = []string{"--ctx-checkpoints", "3"}
+	p.ExtraArgs = []string{"--ctx-checkpoints=3"}
 	return p
 }
 
@@ -79,7 +79,7 @@ func TestAddStoredProfiles_EveryStoredExemption(t *testing.T) {
 	for _, want := range []string{
 		"1 of the 3 restored profiles of tiny.gguf have a context above the model's trained 2,048 and run at 2,048",
 		`profile "path" names the model path "sub//tiny.gguf"`,
-		`profile "late": extra_args --ctx-checkpoints 3 is not passed`,
+		`profile "late": extra_args "--ctx-checkpoints=3": the model server does not read --ctx-checkpoints=value`,
 	} {
 		if !strings.Contains(w, want) {
 			t.Fatalf("warnings %q lack %q", w, want)

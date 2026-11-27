@@ -125,7 +125,7 @@ import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer, testPr
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
 import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute, removeRoute } from './ui-fixture/trash.mjs';
-import { BENCH_STATES, benchRoute } from './ui-fixture/bench.mjs';
+import { BENCH_STATES, benchRoute, rcPost, edProfiles, edPlan, edWrite } from './ui-fixture/bench.mjs';
 import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
@@ -495,7 +495,7 @@ const server = http.createServer((req, res) => {
     if (!c) return json(res, 400, { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error' } });
     json(res, 200, { revision: 413, changed: true, diff: [], warnings: [], audit_entry_ids: [77], id: decodeURIComponent(stg[1]), stage: stg[2] === 'promote' ? 'production' : 'test' });
   });
-  if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
+  if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = (BENCH_STATE === 'editors' && edPlan(b && b.model)) || planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
   // --models: PUT / DELETE /api/models/pin/{key} (v61), the comment in the body or X-Comment
   if (MODELS_STATE && p.startsWith('/api/models/pin/') && (req.method === 'PUT' || req.method === 'DELETE')) return readBody(req, b => {
@@ -521,6 +521,18 @@ const server = http.createServer((req, res) => {
     const r = removeRoute(TRASH_STATE, decodeURIComponent(rmv[1]), b, u.searchParams, now);
     json(res, r.status, r.body);
   });
+  // the run dialog's dry read and start, and a cancel (--bench runcancel, runwait)
+  // the editors' saves (--bench editors): the comment in the body or X-Comment
+  if (BENCH_STATE === 'editors' && (req.method === 'POST' || req.method === 'PUT') && /^\/api\/bench\/(?:groups|suites|benchmarks)(?:\/[^/]+)?$/.test(p)) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = edWrite(req.method, p, b);
+    json(res, r ? r.status : 405, r ? r.body : { error: { message: 'not a save' } });
+  });
+  if ((BENCH_STATE === 'runcancel' || BENCH_STATE === 'runwait' || BENCH_STATE === 'editors') && req.method === 'POST' && /^\/api\/bench\/(?:groups|suites|benchmarks|runs)\/[^/]+\/(?:run|cancel)$/.test(p)) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = rcPost(p, u.searchParams, b);
+    json(res, r ? r.status : 404, r ? r.body : { error: { message: 'not found' } });
+  });
   if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
@@ -530,8 +542,8 @@ const server = http.createServer((req, res) => {
     tokens: { input_tokens: 1834, output_tokens: 1160, tokens_per_second: 214.6 } })) });
   if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
   if (BENCH_STATE && p.startsWith('/api/bench/')) { const d = benchRoute(BENCH_STATE, p, u.searchParams, now); return d ? json(res, 200, d) : notFound(res, p); }
-  // --models written: its written-need profiles are listed too (the Profiles page beside the Models list)
-  if (p === '/api/profiles') return json(res, 200, { profiles: (MODELS_STATE === 'written' ? writtenProfiles(catalogDoc(now)) : []).concat(profileEntries()) });
+  // --bench editors: the editors' profiles first; --models written: its written-need profiles are listed too (the Profiles page beside the Models list)
+  if (p === '/api/profiles') return json(res, 200, { profiles: (BENCH_STATE === 'editors' ? edProfiles() : []).concat(MODELS_STATE === 'written' ? writtenProfiles(catalogDoc(now)) : [], profileEntries()) });
   if (p === '/api/profiles/test') return json(res, 200, testProfiles(now));
   if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)

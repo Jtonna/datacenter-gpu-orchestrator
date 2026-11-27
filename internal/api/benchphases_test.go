@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 )
 
 // auditRec is a recorder that remembers every call.
@@ -18,11 +20,12 @@ type auditCall struct {
 	action, section, target string
 	before, after           any
 	method, path            string
+	comment                 string
 }
 
 func (a *auditRec) Record(r *http.Request, action, section, target string, before, after any) {
 	a.mu.Lock()
-	a.calls = append(a.calls, auditCall{action, section, target, before, after, r.Method, r.URL.Path})
+	a.calls = append(a.calls, auditCall{action, section, target, before, after, r.Method, r.URL.Path, audit.FromRequest(r).Comment})
 	a.mu.Unlock()
 }
 

@@ -120,3 +120,36 @@ func ParseRChar(io string) (int64, error) {
 	}
 	return 0, os.ErrNotExist
 }
+
+// RssAnonMiB is a process's anonymous resident memory in MiB: RssAnon of
+// /proc/<pid>/status (what it allocated and touched, not file pages). The
+// scheduler reads it for the model servers it hosts: their context
+// checkpoints and prompt cache grow it.
+func (p ProcFS) RssAnonMiB(pid int) (int, error) {
+	b, err := os.ReadFile(filepath.Join(p.root(), strconv.Itoa(pid), "status"))
+	if err != nil {
+		return 0, err
+	}
+	return ParseRssAnon(string(b))
+}
+
+// ParseRssAnon reads the RssAnon line ("RssAnon:   123456 kB") of a
+// /proc/<pid>/status text, in MiB.
+func ParseRssAnon(status string) (int, error) {
+	for _, line := range strings.Split(status, "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(k) != "RssAnon" {
+			continue
+		}
+		f := strings.Fields(v)
+		if len(f) == 0 {
+			break
+		}
+		kb, err := strconv.ParseInt(f[0], 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return int(kb / 1024), nil
+	}
+	return 0, os.ErrNotExist
+}

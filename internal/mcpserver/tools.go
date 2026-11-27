@@ -31,6 +31,7 @@ type tool struct {
 	Fallback *fallback
 
 	configWrite bool // takes comment, dry_run, if_revision
+	saveComment bool // a save or delete of a benchmark or group: comment is required, sent as X-Comment
 	write       bool // takes actor
 }
 
@@ -199,6 +200,11 @@ func (t *tool) build(args map[string]any) (restReq, error) {
 		}
 		if len(m) > 0 {
 			r.Body, _ = json.Marshal(m)
+		}
+	}
+	if t.saveComment {
+		if v, ok := args["comment"].(string); ok && v != "" {
+			r.Header.Set("X-Comment", v)
 		}
 	}
 	if t.configWrite {
@@ -379,41 +385,46 @@ func allTools() []*tool {
 			Props: P{"revision": i("The revision number to restore (see list_config_revisions).")}, Required: []string{"revision"}, Destructive: true,
 			Method: "POST", Path: "/api/config/revisions/{revision}/rollback"},
 		{Name: "create_benchmark", Desc: "Create a benchmark definition (a test case run through the scheduler). Read get_bench_schema first.",
-			Props: P{"benchmark": obj("The benchmark, including its id.")}, Required: []string{"benchmark"}, Method: "POST", Path: "/api/bench/benchmarks", BodyArg: "benchmark"},
+			Props: P{"comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header."), "benchmark": obj("The benchmark, including its id.")}, Required: []string{"benchmark", "comment"}, saveComment: true, Method: "POST", Path: "/api/bench/benchmarks", BodyArg: "benchmark"},
 		{Name: "update_benchmark", Desc: "Replace a benchmark definition (send the whole definition).",
-			Props: P{"id": s("The benchmark id."), "benchmark": obj("The complete new benchmark.")}, Required: []string{"id", "benchmark"}, Destructive: true, Idempotent: true,
+			Props: P{"comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header."), "id": s("The benchmark id."), "benchmark": obj("The complete new benchmark.")}, Required: []string{"id", "benchmark", "comment"}, saveComment: true, Destructive: true, Idempotent: true,
 			Method: "PUT", Path: "/api/bench/benchmarks/{id}", BodyArg: "benchmark"},
 		{Name: "delete_benchmark", Desc: "Delete a benchmark definition. Refused while a suite names it.",
-			Props: idArg("benchmark"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/benchmarks/{id}"},
+			Props: P{"id": s("The benchmark id."), "comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header.")}, Required: []string{"id", "comment"}, saveComment: true, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/benchmarks/{id}"},
 		{Name: "create_suite", Desc: "Create a benchmark suite (a group): an ordered list of entries with run options. An entry is a benchmark id, an inline benchmark, {\"benchmark\": id, \"inputs\": {model, ctx, placement, thinking}, \"matrix\": {model: [...], placement: [...], ctx: [...]}} for a recipe, or {\"group\": id} for another group. A scenario that cannot run yet takes status planned or blocked, a reason, and may list no benchmark.",
-			Props: P{"suite": obj("The suite, including its id.")}, Required: []string{"suite"}, Method: "POST", Path: "/api/bench/suites", BodyArg: "suite"},
+			Props: P{"comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header."), "suite": obj("The suite, including its id.")}, Required: []string{"suite", "comment"}, saveComment: true, Method: "POST", Path: "/api/bench/suites", BodyArg: "suite"},
 		{Name: "update_suite", Desc: "Replace a benchmark suite (send the whole definition).",
-			Props: P{"id": s("The suite id."), "suite": obj("The complete new suite.")}, Required: []string{"id", "suite"}, Destructive: true, Idempotent: true,
+			Props: P{"comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header."), "id": s("The suite id."), "suite": obj("The complete new suite.")}, Required: []string{"id", "suite", "comment"}, saveComment: true, Destructive: true, Idempotent: true,
 			Method: "PUT", Path: "/api/bench/suites/{id}", BodyArg: "suite"},
 		{Name: "delete_suite", Desc: "Delete a benchmark suite (its past runs are kept).",
-			Props: idArg("suite"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/suites/{id}"},
+			Props: P{"id": s("The suite id."), "comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header.")}, Required: []string{"id", "comment"}, saveComment: true, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/suites/{id}"},
 		{Name: "run_suite", Desc: "Queue a run of a suite. Benchmarks load and unload real models, so by default the run waits until the scheduler is idle. Returns the queued run; follow it with get_bench_state or get_run. A planned or blocked suite is refused (409) with its reason.",
 			Props: P{"id": s("The suite id."), "baseline": s("Optional run id to compare against (default: the previous completed run)."), "note": s("Optional note stored with the run."),
-				"evict_others": b("Optional, for this run only (default: the suite's setting): do not wait for other users' idle loaded models.")},
-			Required: []string{"id"}, Method: "POST", Path: "/api/bench/suites/{id}/run", Body: []string{"baseline", "note", "evict_others"}},
+				"evict_others":   b("Optional, for this run only (default: the suite's setting): do not wait for other users' idle loaded models."),
+				"only_when_idle": b("Optional, for this run only: wait until nothing else uses the scheduler."), "idle_wait_s": i("Optional, for this run only: how long to wait for idle before the run is skipped."),
+				"comment": s("Required: why, stored with the run and in the audit log."), "evict": strs("When the run would unload models of other people: the list a dry run (dry_run) named; a different list is refused with the new one."), "dry_run": b("Only say what the run would do now: its steps, loads, what is loaded, what it would unload, refusals. Nothing starts.")},
+			Required: []string{"id", "comment"}, Method: "POST", Path: "/api/bench/suites/{id}/run", Body: []string{"baseline", "note", "evict_others", "only_when_idle", "idle_wait_s", "comment", "evict"}, Query: []string{"dry_run"}},
 		// The same four under the name the web UI uses (groups are suites, D24).
 		{Name: "create_bench_group", Desc: "Create a benchmark group: the same as create_suite.",
-			Props: P{"group": obj("The group, including its id.")}, Required: []string{"group"}, Method: "POST", Path: "/api/bench/groups", BodyArg: "group"},
+			Props: P{"comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header."), "group": obj("The group, including its id.")}, Required: []string{"group", "comment"}, saveComment: true, Method: "POST", Path: "/api/bench/groups", BodyArg: "group"},
 		{Name: "update_bench_group", Desc: "Replace a benchmark group (send the whole definition): the same as update_suite.",
-			Props: P{"id": s("The group id."), "group": obj("The complete new group.")}, Required: []string{"id", "group"}, Destructive: true, Idempotent: true,
+			Props: P{"comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header."), "id": s("The group id."), "group": obj("The complete new group.")}, Required: []string{"id", "group", "comment"}, saveComment: true, Destructive: true, Idempotent: true,
 			Method: "PUT", Path: "/api/bench/groups/{id}", BodyArg: "group"},
 		{Name: "delete_bench_group", Desc: "Delete a benchmark group (its past runs are kept): the same as delete_suite.",
-			Props: idArg("group"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/groups/{id}"},
+			Props: P{"id": s("The group id."), "comment": s("Required: why, stored with the change in the audit log. Over HTTP: the body's \"comment\" or the X-Comment header.")}, Required: []string{"id", "comment"}, saveComment: true, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/groups/{id}"},
 		{Name: "run_bench_group", Desc: "Queue a run of a benchmark group: the same as run_suite (it loads and unloads real models; by default it waits until the scheduler is idle).",
 			Props: P{"id": s("The group id."), "baseline": s("Optional run id to compare against (default: the previous completed run)."), "note": s("Optional note stored with the run."),
-				"evict_others": b("Optional, for this run only (default: the group's setting): do not wait for other users' idle loaded models.")},
-			Required: []string{"id"}, Method: "POST", Path: "/api/bench/groups/{id}/run", Body: []string{"baseline", "note", "evict_others"}},
+				"evict_others":   b("Optional, for this run only (default: the group's setting): do not wait for other users' idle loaded models."),
+				"only_when_idle": b("Optional, for this run only: wait until nothing else uses the scheduler."), "idle_wait_s": i("Optional, for this run only: how long to wait for idle before the run is skipped."),
+				"comment": s("Required: why, stored with the run and in the audit log."), "evict": strs("When the run would unload models of other people: the list a dry run (dry_run) named; a different list is refused with the new one."), "dry_run": b("Only say what the run would do now: its steps, loads, what is loaded, what it would unload, refusals. Nothing starts.")},
+			Required: []string{"id", "comment"}, Method: "POST", Path: "/api/bench/groups/{id}/run", Body: []string{"baseline", "note", "evict_others", "only_when_idle", "idle_wait_s", "comment", "evict"}, Query: []string{"dry_run"}},
 		{Name: "run_benchmark", Desc: "Queue a run of one benchmark on its own, without a suite (a run of kind benchmark). It loads and unloads real models, so by default it waits until the scheduler is idle. Returns the queued run; follow it with get_bench_state or get_run, and read its numbers with get_run_measurements.",
 			Props: P{"id": s("The benchmark id."), "baseline": s("Optional run id to compare against (default: the benchmark's previous completed direct run)."), "note": s("Optional note stored with the run."),
 				"only_when_idle": b("Wait until nothing else uses the scheduler (default true)."), "idle_wait_s": i("How long to wait for idle before the run is skipped (default 600)."),
 				"evict_others": b("Do not wait for other users' idle loaded models (default false)."),
-				"inputs":       obj("For a recipe: inputs that fill in or override its defaults: {model, ctx, placement (auto, all, any:N, nodes:a,b; consoles only), thinking, kv_quant, flash_attn}.")},
-			Required: []string{"id"}, Method: "POST", Path: "/api/bench/benchmarks/{id}/run", Body: []string{"baseline", "note", "only_when_idle", "idle_wait_s", "evict_others", "inputs"}},
+				"inputs":       obj("For a recipe: inputs that fill in or override its defaults: {model, ctx, placement (auto, all, any:N, nodes:a,b; consoles only), thinking, kv_quant, flash_attn}."),
+				"comment":      s("Required: why, stored with the run and in the audit log."), "evict": strs("When the run would unload models of other people: the list a dry run (dry_run) named; a different list is refused with the new one."), "dry_run": b("Only say what the run would do now: its steps, loads, what is loaded, what it would unload, refusals. Nothing starts.")},
+			Required: []string{"id", "comment"}, Method: "POST", Path: "/api/bench/benchmarks/{id}/run", Body: []string{"baseline", "note", "only_when_idle", "idle_wait_s", "evict_others", "inputs", "comment", "evict"}, Query: []string{"dry_run"}},
 		{Name: "pin_run", Desc: "Pin a benchmark run so retention (bench_retention_days, off by default) never trims it.",
 			Props: idArg("run"), Required: []string{"id"}, Idempotent: true, Method: "PUT", Path: "/api/bench/runs/{id}/pin"},
 		{Name: "unpin_run", Desc: "Unpin a benchmark run: retention removes it once it is older than bench_retention_days.",
@@ -424,8 +435,9 @@ func allTools() []*tool {
 			Props: P{"id": s("The run id."), "scorer": s("The scorer's name: lower-case letters, digits, '.', '-', '_' (for example kit-tests-strict)."), "scorer_version": s("Optional: the scorer's version, stored with the scores."),
 				"scores": anyv("A list of {result} or {step, task, phase?}, each with points, max_points and optional failed_tests (names) and notes.")},
 			Required: []string{"id", "scorer", "scores"}, Destructive: true, Idempotent: true, Method: "PUT", Path: "/api/bench/runs/{id}/scores/{scorer}", Body: []string{"scorer_version", "scores"}},
-		{Name: "cancel_run", Desc: "Cancel a queued or running benchmark run; what it loaded is unloaded.",
-			Props: idArg("run"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "POST", Path: "/api/bench/runs/{id}/cancel"},
+		{Name: "cancel_run", Desc: "Cancel a queued or running benchmark run; what it loaded is unloaded. The run's outcome says who cancelled it and why.",
+			Props: P{"id": s("The run id."), "comment": s("Required: why, stored with the run and in the audit log.")}, Required: []string{"id", "comment"}, Destructive: true, Idempotent: true,
+			Method: "POST", Path: "/api/bench/runs/{id}/cancel", Body: []string{"comment"}},
 
 		// ---- agent nodes (membership agents; agent contract 7.2) ----
 		{Name: "pause_node", Desc: "Pause an agent node: no new load is placed on it; a load already using it continues. Stored, survives restarts. Only with membership agents.",

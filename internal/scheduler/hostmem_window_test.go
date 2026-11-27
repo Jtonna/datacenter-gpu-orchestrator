@@ -18,13 +18,14 @@ var gemma4Cell = estimate.Ckpt{Family: gguf.FamilyWindowed, CellBytes: 335544320
 func TestHostMemory_ProvenWindowIsUpTo(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.cfg.Defaults.CacheRAMMiB, h.cfg.Defaults.CtxCheckpoints = 2048, 32
+	h.cfg.Defaults.CountHostMemory = true // counting every profile (off counts only profiles with their own flags)
 	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: gemma4Cell}
 	h.llama("g", 4000)
 	r := h.c.dryPlan("g")
 	if r.HostMemory == nil || r.HostMemory.SizeUnknown || !r.HostMemory.Estimate || r.HostMemory.CellMiB != 320 || r.HostMemory.CheckpointsMiB != 10240 {
 		t.Fatalf("%+v", r.HostMemory)
 	}
-	want := "on " + r.HostMemory.Machine + ": up to 12288 MiB, not placed (context checkpoints 10240 MiB, prompt cache 2048 MiB)"
+	want := "on " + r.HostMemory.Machine + ": up to 12288 MiB, host memory not checked: available memory of " + r.HostMemory.Machine + " unknown (no reading yet) (context checkpoints 10240 MiB, prompt cache 2048 MiB); restore points and prompt cache the cluster default"
 	if r.HostMemoryNote != want {
 		t.Fatalf("got %q\nwant %q", r.HostMemoryNote, want)
 	}

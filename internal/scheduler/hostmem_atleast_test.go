@@ -15,11 +15,12 @@ import (
 func TestHostMemory_UnknownSizeReadsAsAFloor(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.cfg.Defaults.CacheRAMMiB, h.cfg.Defaults.NodeHostCacheRAMMiB = 2048, 512
+	h.cfg.Defaults.CountHostMemory = true // counting every profile (off counts only profiles with their own flags)
 	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: estimate.Ckpt{Family: gguf.FamilyWindowed, Unknown: true}}
 	h.llama("s", 4000)
 	h.llama("n", 4000, func(p *core.Profile) { p.Host = core.HostNode })
 	r := h.c.dryPlan("s")
-	want := "on " + r.HostMemory.Machine + ": at least 2048 MiB, not placed (prompt cache 2048 MiB; context checkpoints NOT included: size not yet known, read at the first load)"
+	want := "on " + r.HostMemory.Machine + ": at least 2048 MiB, host memory not checked: available memory of " + r.HostMemory.Machine + " unknown (no reading yet) (prompt cache 2048 MiB; context checkpoints NOT included: size not yet known, read at the first load); restore points and prompt cache the cluster default"
 	if r.HostMemoryNote != want {
 		t.Fatalf("server note\n got %q\nwant %q", r.HostMemoryNote, want)
 	}
@@ -27,7 +28,7 @@ func TestHostMemory_UnknownSizeReadsAsAFloor(t *testing.T) {
 	if rn.HostMemory == nil || !rn.HostMemory.OnNode {
 		t.Fatalf("node-hosted: %+v", rn.HostMemory)
 	}
-	want = "on the host node: at least 512 MiB, not yet counted (prompt cache 512 MiB; context checkpoints NOT included: size not yet known, read at the first load)"
+	want = "on the host node: at least 512 MiB, counted in what it needs (prompt cache 512 MiB; context checkpoints NOT included: size not yet known, read at the first load)"
 	if rn.HostMemoryNote != want {
 		t.Fatalf("node note\n got %q\nwant %q", rn.HostMemoryNote, want)
 	}

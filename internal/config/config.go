@@ -98,7 +98,7 @@ type Config struct {
 	// modelNote is Options.ModelNote while the configuration is checked.
 	modelNote func(string) string
 	// keepArgs is Options.KeepArgs while the configuration is checked;
-	// lateArgs what the check let through for it (LateManagedArgs).
+	// lateArgs what the check let through for it (HostMemoryArgProblems).
 	keepArgs map[string][]string
 	lateArgs []string
 	// trainedCtx and keepCtx are Options.TrainedCtx and KeepCtx while the
@@ -326,8 +326,10 @@ type Defaults struct {
 	// --cache-ram for a host on a node (default 0: no prompt cache there).
 	// CtxCheckpoints is --ctx-checkpoints, per slot, on both (default 32, the
 	// server's own). CountHostMemory: the host-side need (checkpoints x the
-	// family's cell, on a host on a node) enters that node's reservation;
-	// off (the default) it is computed and shown only.
+	// family's cell plus the prompt cache) is counted against the machine
+	// that hosts it for every profile; off (the default) only for a profile
+	// whose extra_args carry --ctx-checkpoints or --cache-ram (opt-in per
+	// profile, scheduler countsHost); for the others it is shown only.
 	NodeHostCacheRAMMiB int
 	CtxCheckpoints      int
 	CountHostMemory     bool
@@ -443,6 +445,10 @@ type Bench struct {
 	// trimmed (its requests and transcripts removed; the run, its steps and its
 	// measurements kept). 0, the default, is off: nothing is ever trimmed.
 	RetentionDays int
+	// NotStartable (bench_not_startable) lists benchmark and group ids that
+	// may not be started: a run of one, or of a group that holds one at any
+	// depth, is refused whole before anything starts. Empty by default.
+	NotStartable []string
 	// Benchmarks and Suites are seeded into the database at start (source "config").
 	Benchmarks []*benchspec.Benchmark
 	Suites     []*benchspec.Suite

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/llamaflags"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -109,8 +110,11 @@ func makeNeedKey(kind core.Kind, model string, ctx, parallel int, kv string, fa 
 	if kv == "" {
 		kv = "f16"
 	}
+	// --ctx-checkpoints and --cache-ram size the host process's memory, not
+	// the devices': they are not part of the shape (llamaflags.Strip), so a
+	// profile that adds them keeps its measured need
 	return needKey{kind: kind, model: model, ctx: ctx, parallel: max(parallel, 1), kvQuant: kv, flashAttn: fa,
-		extraArgs: strings.Join(extra, "\x00")}
+		extraArgs: strings.Join(llamaflags.Strip(extra), "\x00")}
 }
 
 // needOp is one queued store write: rec nil and host nil delete every row

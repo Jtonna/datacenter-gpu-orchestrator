@@ -143,3 +143,13 @@ func TestSignalVerifiedChecksTheCgroupFirst(t *testing.T) {
 		t.Fatal("pid 1 was signalled")
 	}
 }
+
+func TestParseRssAnon(t *testing.T) {
+	st := "Name:\tllama-server\nVmRSS:\t 9000000 kB\nRssAnon:\t 3145728 kB\nRssFile:\t 5000000 kB\n"
+	if mib, err := ParseRssAnon(st); err != nil || mib != 3072 {
+		t.Fatalf("%d %v", mib, err)
+	}
+	if _, err := ParseRssAnon("Name:\tx\n"); err == nil {
+		t.Fatal("no RssAnon line read as 0")
+	}
+}

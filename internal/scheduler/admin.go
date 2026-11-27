@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // ErrNotLoaded is returned by Unload when the profile has no instance.
@@ -83,6 +84,38 @@ func (c *schedCore) cancelQueued(profiles []string) int {
 		c.answerEntry(e, err503(ReasonUnloaded, fmt.Sprintf("%s was unloaded: its model file is being deleted", name), queueRetryAfter))
 	}
 	return n
+}
+
+// dropBenchLoads removes from profile's queue entry the POST /api/load
+// waiters one benchmark run sent (X-Bench-Run run): the run was cancelled
+// while its load still waited for room. A synthetic waiter never disconnects,
+// so without this the model would load later with nobody left to unload it.
+// The entry, its claim and its evictions go when nothing else waits in it;
+// other callers' waiters stay. The number of waiters removed.
+func (c *schedCore) dropBenchLoads(profile, run string) int {
+	e := c.entries[profile]
+	if e == nil || run == "" {
+		return 0
+	}
+	var mine []*waiter
+	e.waiters = slices.DeleteFunc(e.waiters, func(w *waiter) bool {
+		if w.synthetic && w.benchRun == run {
+			mine = append(mine, w)
+			return true
+		}
+		return false
+	})
+	for _, w := range mine {
+		c.answer(w, answer{err: err503(ReasonUnloaded, fmt.Sprintf("the load of %s was withdrawn: benchmark run %s was cancelled", profile, run), queueRetryAfter)})
+	}
+	if len(mine) > 0 && len(e.waiters) == 0 {
+		c.dropClaim(e)
+		c.deleteEntry(e)
+	}
+	if len(mine) > 0 {
+		c.changed = true
+	}
+	return len(mine)
 }
 
 // unloadIdle stops every ready instance with in_flight == 0 and returns

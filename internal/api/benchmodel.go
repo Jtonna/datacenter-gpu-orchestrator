@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 )
 
 // The benchmark data model (potluck-benchmark-data-model.md): runs of one
@@ -293,47 +293,9 @@ func (s *Server) expandGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // runBenchmark is POST /api/bench/benchmarks/{id}/run: one benchmark on its
-// own, as a run of kind "benchmark".
+// own, as a run of kind "benchmark" (benchstart.go).
 func (s *Server) runBenchmark(w http.ResponseWriter, r *http.Request) {
-	if s.shuttingDown(w) {
-		return
-	}
-	var req struct {
-		Baseline     string            `json:"baseline"`
-		Note         string            `json:"note"`
-		EvictOthers  *bool             `json:"evict_others"`
-		OnlyWhenIdle *bool             `json:"only_when_idle"`
-		IdleWaitS    *int              `json:"idle_wait_s"`
-		Inputs       *benchspec.Inputs `json:"inputs"`
-	}
-	body, ok := readBody(w, r)
-	if !ok {
-		return
-	}
-	if len(strings.TrimSpace(string(body))) > 0 {
-		if err := benchspec.DecodeStrict(body, &req); err != nil {
-			apiErr(w, http.StatusBadRequest, "the body must be empty or {\"note\": \"...\", \"baseline\": \"<run id>\", \"only_when_idle\": true, \"idle_wait_s\": 600, \"evict_others\": false, \"inputs\": {\"model\": \"...\", \"ctx\": 8192, \"placement\": \"any:2\"}}: %v", err)
-			return
-		}
-	}
-	if req.Inputs != nil {
-		// The inputs alone, checked as a recipe's would be.
-		probe := benchspec.Benchmark{ID: "inputs", Inputs: req.Inputs, Phases: []benchspec.Phase{{Type: "load"}}}
-		if err := probe.Validate(nil); err != nil {
-			apiErr(w, http.StatusUnprocessableEntity, "%v", err)
-			return
-		}
-	}
-	id := r.PathValue("id")
-	run, err := s.opts.Bench.EnqueueBenchmark(id, bench.BenchRunOptions{Baseline: req.Baseline, Note: req.Note, EvictOthers: req.EvictOthers,
-		OnlyWhenIdle: req.OnlyWhenIdle, IdleWaitS: req.IdleWaitS, Inputs: req.Inputs})
-	if err != nil {
-		s.storeErr(w, err)
-		return
-	}
-	w.Header().Set("Location", "/api/bench/runs/"+run.ID)
-	s.audit(r, "run_start", "benchmark:"+id, nil, map[string]any{"run_id": run.ID, "baseline": req.Baseline, "note": req.Note, "inputs": req.Inputs})
-	writeJSON(w, http.StatusAccepted, run)
+	s.startRun(w, r, bench.RunKindBenchmark)
 }
 
 // metricsParam reads every ?metric= (also comma separated) and checks the names.

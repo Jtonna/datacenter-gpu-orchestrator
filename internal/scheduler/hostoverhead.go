@@ -192,7 +192,7 @@ func (c *schedCore) hostReading(in *inst, avg bool) (mib, logHost int, ok bool) 
 	}
 	ls := in.child.Load()
 	mib = base - free - dev
-	if c.cfg.Defaults.CountHostMemory {
+	if c.countsHost(in.prof) {
 		// the host-memory term counts the checkpoints (hostmem.go): the
 		// reading leaves out those held now, so they are not counted twice
 		mib -= int(ls.HostMem.HeldMiB())

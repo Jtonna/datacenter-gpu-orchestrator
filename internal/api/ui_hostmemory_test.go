@@ -83,3 +83,82 @@ func TestUIHostMemoryLine(t *testing.T) {
 		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": f, "cases": []any{c.want}})
 	}
 }
+
+// p33: the Models panel names where the figures come from, and lists the
+// profiles of one file by group when their own extra arguments differ.
+func TestUIHostMemorySources(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	cluster := map[string]any{"family": "recurrent", "cell_mib": 50.25, "checkpoints": 32, "checkpoints_mib": 1608, "prompt_cache_mib": 2048, "on_node": false, "counted": true,
+		"per_slot": 32, "checkpoints_from": "the cluster default", "prompt_cache_from": "the cluster default"}
+	own := map[string]any{"family": "recurrent", "cell_mib": 50.25, "checkpoints": 3, "checkpoints_mib": 151, "prompt_cache_mib": 0, "on_node": false, "counted": true,
+		"per_slot": 3, "checkpoints_from": "from this profile's extra arguments", "prompt_cache_from": "from this profile's extra arguments"}
+	const lead = "Conversation memory: this model keeps restore points on the machine that hosts it: about 50 MB each"
+	all := map[string]any{}
+	for k, v := range fetch {
+		all[k] = v
+	}
+	all["/api/models"] = withHostMemory(t, fetch["/api/models"], mdlLoaded, cluster)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": all, "cases": []any{map[string]any{"name": "host memory: one source",
+		"route": "#/models?model=" + mdlLoaded, "status": st,
+		"page": []string{lead + ", up to 32 (1,608 MB; the cluster default), counted in what it needs."}}}})
+
+	// the first profile carries its own flags, the rest the cluster default
+	mixed := withHostMemory(t, fetch["/api/models"], mdlLoaded, cluster).(map[string]any)
+	var first string
+	for _, m := range jlist(mixed["models"]) {
+		if mm := jmap(m); jstr(mm["key"]) == mdlLoaded {
+			ps := jlist(mm["profiles"])
+			if len(ps) < 2 {
+				t.Skip("the fixture model has one profile")
+			}
+			jmap(ps[0])["host_memory"] = own
+			first = jstr(jmap(ps[0])["id"])
+		}
+	}
+	all["/api/models"] = mixed
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": all, "cases": []any{map[string]any{"name": "host memory: by profile",
+		"route": "#/models?model=" + mdlLoaded, "status": st,
+		"page": []string{lead + "; by profile: ", "up to 3 (151 MB; from this profile's extra arguments) for " + first,
+			"up to 32 (1,608 MB; the cluster default) for "}}}})
+}
+
+// p33: the placement page's Host block shows the scheduler machine's
+// budget for a model hosted there, and says when it was not checked.
+func TestUIHostRoomLine(t *testing.T) {
+	e := newEnv(t, chatOK)
+	var status map[string]any
+	json.Unmarshal([]byte(body(t, e.get("/api/status"))), &status)
+	plan := func() map[string]any {
+		var p map[string]any
+		if err := json.Unmarshal([]byte(body(t, e.post("/api/plan", `{"model":"alpha"}`))), &p); err != nil {
+			t.Fatal(err)
+		}
+		p["host"] = "server"
+		p["host_memory"] = map[string]any{"family": "windowed", "cell_mib": 320, "checkpoints": 32, "checkpoints_mib": 10240, "prompt_cache_mib": 2048,
+			"counted": true, "machine": "host-1", "checkpoints_from": "the cluster default", "prompt_cache_from": "the cluster default", "estimate": true}
+		return p
+	}
+	short := plan()
+	short["host_room"] = map[string]any{"machine": "host-1", "known": true, "mem_available_mib": 15400, "floor_mib": 1000, "headroom_mib": 200, "budget_mib": 14200,
+		"held_mib": 12288, "this_mib": 12288, "fits": false, "unload": []any{"gemma-4-12b"}}
+	unknown := plan()
+	unknown["host_room"] = map[string]any{"machine": "host-1", "known": false, "note": "host memory not checked: available memory of host-1 unknown (no reading yet)"}
+	never := plan()
+	never["host_room"] = map[string]any{"machine": "host-1", "known": true, "mem_available_mib": 15400, "mem_total_mib": 16000, "capacity_mib": 14800, "floor_mib": 1000, "headroom_mib": 200,
+		"budget_mib": 14200, "this_mib": 22528, "never": true}
+	waits := plan()
+	waits["host_room"] = map[string]any{"machine": "host-1", "known": true, "mem_available_mib": 15400, "floor_mib": 1000, "headroom_mib": 200, "budget_mib": 14200,
+		"held_mib": 12288, "this_mib": 12288, "fits": false, "note": "conservative: what the host process of gemma-4-12b has already taken could not be read, so it counts at its full maximum"}
+	cases := []any{
+		map[string]any{"name": "host room: can never start", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": never},
+			"expect": []string{"host-1 has at most ", ": it can never start there."}},
+		map[string]any{"name": "host room: waits, conservative", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": waits},
+			"expect": []string{"it will not start until memory frees or this profile's limits are lowered.", "conservative: what the host process of gemma-4-12b has already taken could not be read, so it counts at its full maximum."}},
+		map[string]any{"name": "host room: short, an idle model unloaded first", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": short},
+			"expect": []string{"restore points and prompt cache the cluster default.", "host-1 has ", " for conversation memory (available ", "gemma-4-12b would be unloaded first."}},
+		map[string]any{"name": "host room: not checked", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": unknown},
+			"expect": []string{"host memory not checked: available memory of host-1 unknown (no reading yet)."}},
+	}
+	uiExec(t, map[string]any{"modules": []string{"views/placement.js"}, "fetch": map[string]any{}, "cases": cases})
+}

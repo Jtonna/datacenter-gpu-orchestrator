@@ -117,6 +117,9 @@ type Options struct {
 	// read-only folder); trashStop acts out a kill between its steps.
 	trashOps  *modelfiles.Ops
 	trashStop func(step string) bool
+	// benchLocalOK lets a benchmark load on the scheduler's own machine
+	// (tests only: the API test fleet is that one machine).
+	benchLocalOK bool
 	// proxyOnResponse is passed to the proxy as Options.OnResponse (tests cut
 	// a request once the model server's headers arrived).
 	proxyOnResponse func()
@@ -236,6 +239,8 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 		s.reqs = usage.NewRecorder(nil) // live rows only
 	}
 	s.reqs.SetNamer(s.modelName) // short_name: the same rule as /api/models
+	// every run, scheduled ones too, passes the start gate (benchstart.go)
+	s.wireBenchGate()
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.peaks = startPeakCycles(o.History)
@@ -755,7 +760,19 @@ func (s *Server) handleUnloadAllText(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) unload(w http.ResponseWriter, r *http.Request, model string, force bool) {
+	// A benchmark run that ends (cancelled, failed, timed out) force-unloads
+	// what it loaded with X-Bench-Run: a load of its own that still waits in
+	// the queue is withdrawn first, so it cannot start later for nobody.
+	withdrawn := 0
+	if run := benchRunHeader(r.Header.Get("X-Bench-Run")); force && run != "" {
+		withdrawn, _ = s.sched.DropBenchLoads(r.Context(), model, run)
+	}
 	err := s.sched.Unload(r.Context(), model, force)
+	if withdrawn > 0 && errors.Is(err, scheduler.ErrNotLoaded) {
+		s.auditRuntime(r, audit.ActionUnload, model, map[string]any{"force": force, "withdrawn_queued_loads": withdrawn})
+		writeJSON(w, http.StatusOK, map[string]any{"msg": "ok", "model": model, "withdrawn_queued_loads": withdrawn})
+		return
+	}
 	switch {
 	case err == nil:
 		s.auditRuntime(r, audit.ActionUnload, model, map[string]any{"force": force})

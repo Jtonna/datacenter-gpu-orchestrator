@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/llamaflags"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
@@ -115,7 +116,7 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		"--ctx-size", strconv.Itoa(p.Ctx * parallel),
 		"--parallel", strconv.Itoa(parallel),
 	}
-	args = append(args, profileHead(o.CacheRAMMiB, o.CtxCheckpoints)...)
+	args = append(args, profileHead(profileHostMemory(p, o.CacheRAMMiB, o.CtxCheckpoints))...)
 	if len(rpc) > 0 {
 		args = append(args, "--rpc", strings.Join(rpc, ","))
 	}
@@ -140,6 +141,21 @@ func profileHead(cacheRAMMiB, ctxCheckpoints int) []string {
 	return append(args, "-lv", strconv.Itoa(LlamaLogVerbosity))
 }
 
+// profileHostMemory is the prompt cache and restore points a launch of p
+// passes: the profile's own --cache-ram and --ctx-checkpoints in its
+// extra_args (llamaflags) when it has them, else the cluster values of the
+// path it is launched on (cacheRAMMiB, ctxCheckpoints).
+func profileHostMemory(p core.Profile, cacheRAMMiB, ctxCheckpoints int) (int, int) {
+	h, _ := llamaflags.Parse(p.ExtraArgs)
+	if h.HasCacheRAM {
+		cacheRAMMiB = h.CacheRAMMiB
+	}
+	if h.HasCtxCheckpoints {
+		ctxCheckpoints = h.CtxCheckpoints
+	}
+	return cacheRAMMiB, ctxCheckpoints
+}
+
 // HostMemoryArgs is what a launch says about the host process's own memory,
 // always explicit: the prompt cache (--cache-ram, MiB per loaded model) and
 // the context checkpoints per slot (--ctx-checkpoints; the server's default
@@ -157,9 +173,9 @@ func profileTail(p core.Profile) []string {
 	if p.FlashAttn {
 		args = append(args, "--flash-attn", "on")
 	}
-	// a flag the scheduler manages since (a stored profile may still carry
-	// it, config.StripLateManaged) is never passed: the setting is the value
-	return append(args, config.StripLateManaged(p.ExtraArgs)...)
+	// the profile's own --ctx-checkpoints and --cache-ram are passed in
+	// profileHead, in place of the cluster value: never twice on one line
+	return append(args, llamaflags.Strip(p.ExtraArgs)...)
 }
 
 // HostLaunchArgs is the extra_args of a host launch on a node (phase 6): the
@@ -172,7 +188,7 @@ func profileTail(p core.Profile) []string {
 // by the watchdog, instead of pages mapped from the share.
 func HostLaunchArgs(p core.Profile, o HostOptions) []string {
 	args := []string{"--n-gpu-layers", "999", "--fit", "off"}
-	args = append(args, profileHead(o.CacheRAMMiB, o.CtxCheckpoints)...)
+	args = append(args, profileHead(profileHostMemory(p, o.CacheRAMMiB, o.CtxCheckpoints))...)
 	if o.NoMmap {
 		args = append(args, "--no-mmap")
 	}
