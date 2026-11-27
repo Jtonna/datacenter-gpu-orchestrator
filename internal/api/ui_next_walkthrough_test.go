@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -325,4 +327,167 @@ func TestUINextModelPanelToneDown(t *testing.T) {
 		map[string]any{"name": "W1: the page's Restore points column and Make standard profiles", "route": "#/models/" + mdlLoaded, "status": st,
 			"has": []string{"[data-restore-points='3'][data-own]", "button[data-act=standard]"}},
 	}})
+}
+
+// W2: the Test profiles page (the owner's walkthrough, build-92; board
+// walkthrough-fixes frame 2). Promote in the row is a small plain button;
+// it asks twice and writes nothing before the second press (Demote on
+// Profiles the same); a row opens the profile's side panel, the same one
+// Profiles opens, with its config and Promote, Edit, Duplicate, Compare
+// with… and Delete, one primary button; "Compare with…" reads two profiles
+// and two dry plans and writes nothing.
+func TestUINextTestProfilePanel(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--catalog"}, "/api/profiles/test", "/api/profiles", "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	const tp, prod = "qwen3-14b-128k", "gemma-4-27b"
+	for _, x := range jlist(jmap(fetch["/api/profiles"])["profiles"]) { // as the server gives every row: its unload when idle
+		if jstr(jmap(x)["id"]) == tp {
+			jmap(x)["ttl_s"] = 600
+		}
+	}
+	fetch["/api/config/profiles/"+tp] = map[string]any{"revision": 412, "id": tp, "profile": map[string]any{"kind": "llama", "model": "qwen3-14b-Q5_K_M.gguf", "ctx": 131072,
+		"stage": "test", "extra_args": []string{"--ctx-checkpoints", "3", "--jinja", "--temp=0.7"}}}
+	fetch["/api/config/profiles/"+prod] = map[string]any{"revision": 412, "id": prod, "profile": map[string]any{"kind": "llama", "model": "gemma-4-27b-it-Q4_K_M.gguf", "ctx": 131072,
+		"display_name": "Gemma chat", "extra_args": []string{"--ctx-checkpoints=8", "--jinja", "--mlock"}}}
+	fetch["POST /api/plan"] = map[string]any{"$match": []any{
+		[]any{`"model":"` + tp + `"`, map[string]any{"action": "start", "need_mib": 9216, "need_basis": "estimated from the file size"}},
+		[]any{`"model":"` + prod + `"`, map[string]any{"action": "serve", "need_mib": 18432, "need_basis": "measured at a load"}}}}
+	page := "#/test-profiles?q=" + tp
+	open := page + "&profile=" + tp
+	writes := []string{`/promote`, `/demote`, `^PUT `, `^DELETE `}
+	promote := []any{"tr[data-profile=" + tp + "] button[data-act=promote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "it works"}, "div.dlg-foot button.pri"}
+	compare := []any{"aside.side button[data-act=compare]", map[string]any{"type": "input[data-cmp-search]", "value": prod}, "div.dlg button[data-pick=" + prod + "]"}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "W2: Promote in the row is a small plain button", "route": page, "status": st,
+			"has": []string{"tr[data-profile=" + tp + "] button.btn.sm.plain[data-act=promote]"}, "none": []string{"tr button.pri"}},
+		map[string]any{"name": "W2: step 1 says what it does, takes the comment, Review", "route": page, "status": st,
+			"click":   []any{"tr[data-profile=" + tp + "] button[data-act=promote]"},
+			"pageHas": []string{"div.dlg [data-dlg=promote] [data-after]", "div.dlg-foot button.pri[disabled]", "textarea[aria-label=Comment]"},
+			"pageSeq": map[string]any{"div.dlg-foot button": []string{"Cancel", "Review"}}, "notFetched": writes},
+		map[string]any{"name": "W2: step 2 asks Promote <name>? and nothing is written yet", "route": page, "status": st,
+			"click":   promote,
+			"pageHas": []string{"div.dlg [data-dlg=promote-confirm]", "div.dlg [data-comment]"}, "page": []string{"Promote Qwen 128k trial?", "it works"},
+			"pageSeq": map[string]any{"div.dlg-foot button": []string{"Back", "Promote"}}, "notFetched": writes},
+		map[string]any{"name": "W2: Back returns to step 1, still nothing written", "route": page, "status": st,
+			"click":   append(append([]any{}, promote...), "div.dlg-foot button"),
+			"pageHas": []string{"div.dlg [data-dlg=promote]"}, "pageNone": []string{"div.dlg [data-dlg=promote-confirm]"}, "notFetched": writes},
+		map[string]any{"name": "W2: the row's Promote opens no panel", "route": page, "status": st,
+			"click": []any{"tr[data-profile=" + tp + "] button[data-act=promote]"}, "pageNone": []string{"aside.side"}},
+		map[string]any{"name": "W2: a row click opens the profile's side panel", "route": page, "status": st,
+			"click": []any{"tr[data-profile=" + tp + "]"}, "hash": open,
+			"pageHas": []string{"aside.side [data-shown]", "aside.side [data-stage=test]", "aside.side [data-extra-args]", "aside.side [data-ttl]",
+				"aside.side a[data-act=edit]", "aside.side a[data-act=copy]", "aside.side button[data-act=promote]", "aside.side button[data-act=compare]", "aside.side button[data-act=delete]"},
+			"page":      []string{"Test profile", "Model file", "Context", "Extra arguments", "--ctx-checkpoints 3 --jinja --temp=0.7", "Unload when idle", "Stage", "Placement", "Where it would go now"},
+			"pageCount": map[string]any{"aside.side .btn.pri": 1}, "notFetched": writes},
+		map[string]any{"name": "W2: the panel's Promote asks twice too", "route": open, "status": st,
+			"click":   []any{"aside.side button[data-act=promote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "ok"}, "div.dlg-foot button.pri"},
+			"pageHas": []string{"div.dlg [data-dlg=promote-confirm]"}, "notFetched": writes},
+		map[string]any{"name": "W2: Compare with: any profile, the differences only", "route": open, "status": st,
+			"click": compare,
+			"pageHas": []string{"table.cmp-tbl[data-compare=" + prod + "] tr[data-need]",
+				"table.cmp-tbl tr[data-key=model][data-diff=diff]", "table.cmp-tbl tr[data-key=stage][data-only=a]", "table.cmp-tbl tr[data-key=display_name][data-only=b]",
+				"table.cmp-tbl tr[data-flag=--ctx-checkpoints][data-diff=diff]", "table.cmp-tbl tr[data-flag=--temp][data-only=a]", "table.cmp-tbl tr[data-flag=--mlock][data-only=b]"},
+			"pageNone": []string{"table.cmp-tbl tr[data-key=kind]", "table.cmp-tbl tr[data-key=ctx]", "table.cmp-tbl tr[data-flag=--jinja]", "table.cmp-tbl tr[data-diff=same]"},
+			"page":     []string{"Setting", "What it needs (the plan now)", "Show all settings", "6 settings differ"},
+			"fetchedQuery": []string{`^GET /api/config/profiles/` + tp + `$`, `^GET /api/config/profiles/` + prod + `$`,
+				`^POST /api/plan \{"model":"` + tp + `"\}$`, `^POST /api/plan \{"model":"` + prod + `"\}$`},
+			"notFetched": writes},
+		map[string]any{"name": "W2: Show all settings shows the same ones too", "route": open, "status": st,
+			"click":      append(append([]any{}, compare...), "div.dlg button.switch"),
+			"pageHas":    []string{"table.cmp-tbl tr[data-key=kind][data-diff=same]", "table.cmp-tbl tr[data-key=ctx][data-diff=same]", "table.cmp-tbl tr[data-flag=--jinja][data-diff=same]"},
+			"notFetched": writes},
+		map[string]any{"name": "W2: Compare picks a test profile too", "route": "#/profiles?profile=" + prod, "status": st,
+			"click":   []any{"aside.side button[data-act=compare]", map[string]any{"type": "input[data-cmp-search]", "value": tp}},
+			"pageHas": []string{"div.dlg button[data-pick=" + tp + "]"}},
+		map[string]any{"name": "W2: Demote asks twice, nothing before the second press", "route": "#/profiles?profile=" + prod, "status": st,
+			"click":   []any{"aside.side button[data-act=demote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "trial"}, "div.dlg-foot button.pri"},
+			"pageHas": []string{"div.dlg [data-dlg=demote-confirm]"}, "page": []string{"Demote Gemma chat?"}, "notFetched": writes},
+	}})
+}
+
+// W2: the one pure function behind "Compare with…" (core/profilediff.js):
+// a same value, a different value, a flag on one side only, a flag with a
+// different value ("--x=8" against "--x 3"), a setting absent on one side.
+func TestUINextProfileDiff(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	mod := "file:///" + strings.TrimPrefix(filepath.ToSlash(filepath.Join(filepath.Dir(here), "ui", "next", "core", "profilediff.js")), "/")
+	script := `import { profileDiff, splitFlags } from '` + mod + `';
+const a = {model: 'm.gguf', ctx: 8192, parallel: 2, extra_args: ['--ctx-checkpoints', '3', '--jinja', '--temp=0.7', '--n-cpu-moe', '4', '--bias', '-1']};
+const b = {ctx: 16384, model: 'm.gguf', aliases: ['x'], extra_args: ['--ctx-checkpoints=8', '--jinja', '--mlock', '--n-cpu-moe', '4']};
+console.log(JSON.stringify({rows: profileDiff(a, b, ['model', 'ctx']), none: profileDiff({}, {}), flags: splitFlags(a.extra_args)}));`
+	out, err := exec.Command(node, "--input-type=module", "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, out)
+	}
+	type row struct {
+		Key  string `json:"key"`
+		A    any    `json:"a"`
+		B    any    `json:"b"`
+		Same bool   `json:"same"`
+		Only string `json:"only"`
+	}
+	var got struct {
+		Rows  []row   `json:"rows"`
+		None  []row   `json:"none"`
+		Flags [][]any `json:"flags"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	by := map[string]row{}
+	var keys []string
+	for _, r := range got.Rows {
+		by[r.Key] = r
+		keys = append(keys, r.Key)
+	}
+	want := []struct {
+		key  string
+		a, b any
+		same bool
+		only string
+	}{
+		{"model", "m.gguf", "m.gguf", true, ""},               // the same value
+		{"ctx", 8192.0, 16384.0, false, ""},                   // a different value
+		{"parallel", 2.0, nil, false, "a"},                    // a setting absent on one side
+		{"aliases", nil, []any{"x"}, false, "b"},              // and on the other
+		{"extra_args --ctx-checkpoints", "3", "8", false, ""}, // a flag with a different value, either spelling
+		{"extra_args --jinja", true, true, true, ""},          // a flag on both sides
+		{"extra_args --temp", "0.7", nil, false, "a"},         // a flag on one side only
+		{"extra_args --n-cpu-moe", "4", "4", true, ""},        // a flag with the same value
+		{"extra_args --bias", "-1", nil, false, "a"},          // a negative number is a value, not a flag
+		{"extra_args --mlock", nil, true, false, "b"},         // a flag on the other side only
+	}
+	for _, w := range want {
+		r, ok := by[w.key]
+		if !ok {
+			t.Errorf("no row %q in %v", w.key, keys)
+			continue
+		}
+		wa, _ := json.Marshal(w.a)
+		wb, _ := json.Marshal(w.b)
+		ga, _ := json.Marshal(r.A)
+		gb, _ := json.Marshal(r.B)
+		if string(wa) != string(ga) || string(wb) != string(gb) || r.Same != w.same || r.Only != w.only {
+			t.Errorf("%s: got a=%s b=%s same=%v only=%q, want a=%s b=%s same=%v only=%q", w.key, ga, gb, r.Same, r.Only, wa, wb, w.same, w.only)
+		}
+	}
+	if len(got.Rows) != len(want) {
+		t.Errorf("rows %v, want %d", keys, len(want))
+	}
+	if _, ok := by["extra_args"]; ok {
+		t.Error("extra_args is compared as one row, not flag by flag")
+	}
+	if len(keys) < 2 || keys[0] != "model" || keys[1] != "ctx" {
+		t.Errorf("the given order first: %v", keys)
+	}
+	if len(got.None) != 0 {
+		t.Errorf("two empty profiles: %v", got.None)
+	}
+	if len(got.Flags) != 5 {
+		t.Errorf("splitFlags: %v", got.Flags)
+	}
 }

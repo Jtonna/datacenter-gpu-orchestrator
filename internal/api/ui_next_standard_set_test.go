@@ -34,7 +34,7 @@ func TestUINextProfilesStage(t *testing.T) {
 			"page":    []string{"TEST - qwen3-14b-laptop", "Stage", "Test (forced zones)", "Promote"},
 			"pageHas": []string{"aside.side button[data-act=promote]"}, "pageNone": []string{"aside.side button[data-act=demote]"}},
 		map[string]any{"name": "profiles: promote asks a comment and sends the id", "route": "#/profiles?show=all&profile=qwen3-14b-laptop", "status": st,
-			"click":        []any{"aside.side button[data-act=promote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "in use every day"}, "div.dlg-foot button.pri"},
+			"click":        []any{"aside.side button[data-act=promote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "in use every day"}, "div.dlg-foot button.pri", "div.dlg-foot button.pri"},
 			"fetchedQuery": []string{`^POST /api/config/profiles/qwen3-14b-laptop/promote \{"comment":"in use every day"\}$`},
 			"notFetched":   []string{`TEST - `}},
 		map[string]any{"name": "profiles: the promote dialog without a comment sends nothing", "route": "#/profiles?show=all&profile=qwen3-14b-laptop", "status": st,
@@ -42,7 +42,7 @@ func TestUINextProfilesStage(t *testing.T) {
 			"pageHas": []string{"div.dlg [data-dlg=promote]", "div.dlg-foot button.pri[disabled]"}, "page": []string{"qwen3-14b-laptop", "after"},
 			"notFetched": []string{`/promote`}},
 		map[string]any{"name": "profiles: demote a production profile", "route": "#/profiles?profile=gemma-4-27b", "status": st,
-			"click":        []any{"aside.side button[data-act=demote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "trial only"}, "div.dlg-foot button.pri"},
+			"click":        []any{"aside.side button[data-act=demote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "trial only"}, "div.dlg-foot button.pri", "div.dlg-foot button.pri"},
 			"fetchedQuery": []string{`^POST /api/config/profiles/gemma-4-27b/demote \{"comment":"trial only"\}$`}},
 		map[string]any{"name": "profiles: the editor has the display name, not the stage", "route": "#/profiles/gemma-4-27b", "status": st,
 			"expect": []string{"Display name"}, "absent": []string{"Whether the profile is a test or a production profile"}},
@@ -74,7 +74,7 @@ func TestUINextTestProfilesPage(t *testing.T) {
 			"expect": []string{"TEST - qwen3-14b-laptop", "Forced zones", "1 test profile"}},
 		map[string]any{"name": "test profiles: nothing matches", "route": "#/test-profiles?q=zzzz", "status": st, "expect": []string{"No test profile matches"}},
 		map[string]any{"name": "test profiles: promote sends the id", "route": "#/test-profiles?reason=marked", "status": st,
-			"click":        []any{"tr[data-profile=qwen3-14b-128k] button[data-act=promote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "it works"}, "div.dlg-foot button.pri"},
+			"click":        []any{"tr[data-profile=qwen3-14b-128k] button[data-act=promote]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "it works"}, "div.dlg-foot button.pri", "div.dlg-foot button.pri"},
 			"page":         []string{"Qwen 128k trial"},
 			"fetchedQuery": []string{`^POST /api/config/profiles/qwen3-14b-128k/promote \{"comment":"it works"\}$`}},
 	}})
@@ -237,7 +237,7 @@ func TestUINextPromoteDropsTheTestName(t *testing.T) {
 	tests := fetch["/api/profiles/test"]
 	fetch["/api/profiles/test"] = after(trial, tests, promoted(tests, "profiles", "qwen3-14b-128k", true))
 	confirm := func(sel string) []any {
-		return []any{sel, map[string]any{"type": "textarea[aria-label=Comment]", "value": "in use"}, "div.dlg-foot button.pri"}
+		return []any{sel, map[string]any{"type": "textarea[aria-label=Comment]", "value": "in use"}, "div.dlg-foot button.pri", "div.dlg-foot button.pri"}
 	}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "promote: Settings > Profiles names it without TEST - at once", "route": "#/profiles?show=all&q=laptop&profile=qwen3-14b-laptop", "status": st,

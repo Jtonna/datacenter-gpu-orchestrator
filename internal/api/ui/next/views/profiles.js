@@ -34,15 +34,16 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, schemaForm, searchField, facts, fileShort, dialog, toast, profileLabel, profileStage } from '../core/ui.js';
+import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, schemaForm, searchField, facts, fileShort, dialog, toast, toggle, profileLabel, profileStage } from '../core/ui.js';
 import { openPanel, openPanelNow } from '../core/panel.js';
 import { pager } from '../core/pager.js';
-import { num, mib, gb, ctx, plural } from '../core/format.js';
+import { num, mib, gb, ctx, plural, dur } from '../core/format.js';
 import { plainReason, plainBasis, machines, nodeName } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
 import { restorePoints } from './models/kinds.js';
+import { profileDiff } from '../core/profilediff.js';
 
 const PER = 16; // rows a page (as the Zones list)
 
@@ -216,31 +217,50 @@ export function saveProfile(o) {
 
 // ---------- promote and demote ----------
 
-// changeStage(e, to) -> the dialog and the write that marks a profile
+// changeStage(e, to) -> the dialogs and the write that mark a profile
 // production (promote) or test (demote): POST /api/config/profiles/<id>/promote
 // or /demote with a required comment (audited; nothing is written when it
-// is already so). Resolves to the answer, or null when cancelled or refused
-// (a toast says why). e is a GET /api/profiles (or /api/profiles/test) row.
+// is already so). It asks TWICE (the owner's walkthrough, build-92 W2): step
+// 1 says what it does and takes the comment ("Review"); step 2 asks
+// "Promote <name>?" with Back and Promote. Nothing is sent before the second
+// press. Resolves to the answer, or null when cancelled or refused (a toast
+// says why). e is a GET /api/profiles (or /api/profiles/test) row.
 export async function changeStage(e, to) {
   const promote = to === 'production';
   const shown = profileLabel(e);
-  const after = promote ? (e.display_name || e.id) : 'TEST - ' + (e.display_name || e.id);
-  const r = await dialog({
-    title: h('span', promote ? 'Promote ' : 'Demote ', h('span.mono', e.id), '?'),
-    body: h('div.col', { style: 'gap:10px', 'data-dlg': promote ? 'promote' : 'demote' },
-      h('p', promote ? "It becomes a production profile: listed with the model's profiles." : 'It becomes a test profile: moved to the Test profiles page, out of the way.'),
-      h('p', 'Shown as ', h('b', shown), ' now, ', h('b', { 'data-after': '' }, after), ' after. The id clients send stays ', h('span.mono', e.id),
-        '. Nothing about where or how it loads changes.')),
-    comment: { label: 'Comment', required: true, placeholder: 'Why? It is kept in the audit log.' },
-    actions: [{ label: 'Cancel', value: undefined }, { label: promote ? 'Promote' : 'Demote', kind: 'pri', value: true }],
-  });
-  if (!r || r.value !== true || !r.comment) return null;
+  const name = e.display_name || e.id;
+  const after = promote ? name : 'TEST - ' + name;
+  const verb = promote ? 'Promote' : 'Demote';
+  let comment = '';
+  for (;;) {
+    const r = await dialog({
+      title: h('span', verb + ' ', h('span.mono', e.id)),
+      body: h('div.col', { style: 'gap:10px', 'data-dlg': promote ? 'promote' : 'demote' },
+        h('p', promote ? "It becomes a production profile: listed with the model's profiles." : 'It becomes a test profile: moved to the Test profiles page, out of the way.'),
+        h('p', 'Shown as ', h('b', shown), ' now, ', h('b', { 'data-after': '' }, after), ' after. The id clients send stays ', h('span.mono', e.id),
+          '. Nothing about where or how it loads changes.')),
+      comment: { label: 'Comment', required: true, placeholder: 'Why? It is kept in the audit log.', value: comment },
+      actions: [{ label: 'Cancel', value: undefined }, { label: 'Review', kind: 'pri', value: true }],
+    });
+    if (!r || r.value !== true || !r.comment) return null;
+    comment = r.comment;
+    const c = await dialog({
+      title: verb + ' ' + name + '?',
+      body: h('div.col', { style: 'gap:10px', 'data-dlg': (promote ? 'promote' : 'demote') + '-confirm' },
+        h('p', promote ? 'It will be a production profile, shown as ' : 'It will be a test profile, shown as ', h('b', after), '.'),
+        h('p', h('span.mut', 'Comment: '), h('span', { 'data-comment': '' }, comment))),
+      actions: [{ label: 'Back', value: 'back' }, { label: verb, kind: 'pri', value: true, autofocus: true }],
+    });
+    if (c === 'back') continue;
+    if (c !== true) return null;
+    break;
+  }
   try {
-    const res = await api.send('POST', '/api/config/profiles/' + encodeURIComponent(e.id) + (promote ? '/promote' : '/demote'), { comment: r.comment }, { comment: r.comment });
+    const res = await api.send('POST', '/api/config/profiles/' + encodeURIComponent(e.id) + (promote ? '/promote' : '/demote'), { comment }, { comment });
     toast(res && res.changed ? (promote ? 'Promoted ' : 'Demoted ') + e.id + (res.revision ? ' (revision ' + num(res.revision) + ')' : '') + '.'
       : e.id + ' was already ' + (promote ? 'production' : 'test') + ': nothing written.', 'ok');
     return res || {};
-  } catch (err) { toast((promote ? 'Promote' : 'Demote') + ' of ' + e.id + ' refused: ' + err.message, 'err'); return null; }
+  } catch (err) { toast(verb + ' of ' + e.id + ' refused: ' + err.message, 'err'); return null; }
 }
 
 // testWhy(e) -> why a profile is test, in words: marked, generated, forced zones
@@ -249,6 +269,188 @@ export function testWhy(e) {
   if (e.generated) return 'generated';
   if ((e.force_nodes || []).length) return 'forced zones';
   return '';
+}
+
+// ---------- the side panel (Profiles and Test profiles) ----------
+
+// readSpec(id) -> the profile as written (GET /api/config/profiles/<id>):
+// its extra arguments, and the settings "Compare with…" compares
+const readSpec = async id => ((await api.get('/api/config/profiles/' + encodeURIComponent(id))) || {}).profile || {};
+
+// whereText(profile, plan, instance): names only where they are given
+// (the page rule): a forced profile's own zones, or the machines a loaded
+// instance is on. An automatic profile's plan picks among equal machines
+// and can pick others a moment later, so it says how many.
+function whereText(e, plan, inst) {
+  const st = state.status || {};
+  if ((e.force_nodes || []).length || e.placement === 'forced') return (plan.nodes || []).length ? [h('span.mut', 'on'), nodeChips(plan.nodes)] : null;
+  const on = inst ? (inst.nodes || []).map(n => nodeName(st, n && typeof n === 'object' ? n.id : n)) : [];
+  if (on.length) return h('span.row', { style: 'gap:8px', 'data-loaded-on': String(on.length) }, h('span.mut', 'Loaded on'), nodeChips(on));
+  const n = (plan.nodes || []).length;
+  // loaded or loading but its instance not in the status yet: a count, not "would load"
+  const now = plan.action === 'serve' || plan.action === 'wait';
+  return n ? h('span', { 'data-would': String(n) }, (now ? 'on ' : 'would load on ') + machines(st, n)) : null;
+}
+
+// panelBody(id, e, spec): the profile's config (a GET /api/profiles row and,
+// once read, its spec: undefined while reading, null when it could not be read)
+function panelBody(id, e, spec) {
+  if (!e) return [empty('There is no profile ' + id, 'It may have been deleted, or its name changed.')];
+  const plan = e.plan || {};
+  const [label, kind, why] = verdict(plan);
+  const inst = ((state.status && state.status.instances) || []).find(i => i.profile === id);
+  const force = e.force_nodes || [];
+  const rp = restorePoints(e);
+  const xa = spec && spec.extra_args;
+  return [
+    e.description ? h('p.prf-desc', { key: 'desc' }, e.description) : null,
+    h('section.prf-part', { key: 'facts' }, facts([
+      ['Model', h('span', { title: e.model }, shortModel(e.model) || e.model || '–')],
+      ['Model file', h('span', { title: e.model }, e.model || '–')],
+      e.kind === 'command' ? ['Kind', 'command'] : ['Context', e.ctx ? ctx(e.ctx) : '–'],
+      (e.parallel || 1) > 1 ? ['Parallel slots', String(e.parallel)] : null,
+      (e.aliases || []).length ? ['Aliases', e.aliases.join(', ')] : null,
+      e.needs_mib ? ['Memory need', h('span', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : '') }, gb(e.needs_mib))] : null,
+      e.needs_mib && e.needs_basis ? ['Worked out', h('span', { title: e.needs_basis }, plainBasis(e.needs_basis))] : null,
+      // the restore points it keeps on the hosting machine, and where the number comes from (build-92 W1)
+      rp ? ['Restore points', h('span', { 'data-restore-points': String(rp.n), title: e.host_memory.checkpoints_from || null },
+        num(rp.n) + ' (' + num(Math.round(rp.mib || 0)) + ' MB)' + (rp.own ? ' · its own, from its extra arguments' : ' · the cluster default'))] : null,
+      // its extra arguments as written, and when it unloads (build-92 W2)
+      e.kind === 'command' ? null : ['Extra arguments', spec === undefined ? h('span.mut', 'reading…') : spec === null ? h('span.mut', 'could not be read')
+        : (xa || []).length ? h('span.mono', { 'data-extra-args': '' }, xa.join(' ')) : h('span.mut', { 'data-extra-args': '' }, 'none')],
+      typeof e.ttl_s === 'number' ? ['Unload when idle', h('span', { 'data-ttl': String(e.ttl_s) }, e.ttl_s > 0 ? 'after ' + dur(e.ttl_s) : 'never')] : null,
+      ['Stage', h('span', { 'data-stage': profileStage(e) }, profileStage(e) === 'test' ? 'Test (' + testWhy(e) + ')' : 'Production' + (e.stage_set ? '' : ' (not marked: the rule)'))],
+      e.display_name ? ['Display name', e.display_name] : null,
+      ['Id', h('span.mono', e.id)],
+      ['Generated', e.generated ? 'yes, for benchmarks' : 'no, made by hand'],
+    ])),
+    h('section.prf-part', { key: 'placement' }, h('h3', 'Placement'),
+      force.length ? [h('div', h('span.mut', 'Forced on ' + plural(force.length, 'zone') + ': '), nodeChips(force)),
+        (e.tensor_split || []).length ? h('div', h('span.mut', 'Tensor split: '), h('span.mono', e.tensor_split.join(' / '))) : null]
+        : h('div', 'Automatic: the scheduler picks the zones at each load.', (e.allow_tiers || []).length ? h('span.mut', ' Tiers ' + e.allow_tiers.join(', ') + ' only.') : null),
+      e.host === 'node' ? h('div', hostLine(e)) : null,
+      e.blocked_by_exclusion ? h('div.err-t', 'Blocked: a forced zone is switched off (' + e.blocked_by_exclusion + ').') : null),
+    h('section.prf-part', { key: 'plan' }, h('h3', 'Where it would go now'),
+      h('div.row', { style: 'gap:8px' }, badge(label, kind, why), whereText(e, plan, inst), plan.tight_fit ? badge('Tight fit', 'load') : null),
+      plan.reason ? h('p.mut', { title: plan.reason }, plainReason(plan.reason)) : null,
+      plan.warning ? h('p.warn-t', { title: plan.warning }, plainReason(plan.warning)) : null,
+      inst ? h('p', inst.stale_profile ? 'A model of this profile is loaded with an older definition.' : 'A model of this profile is loaded now.') : null,
+      h('a', { href: href('placement', [id]) }, 'Open in Placement preview')),
+  ];
+}
+
+// deleteProfile(id) -> the review and the DELETE of one profile; resolves to
+// reviewChanges' answer, or null (a toast says why)
+export async function deleteProfile(id) {
+  let revision = 0;
+  try { revision = (await api.get('/api/config/profiles/' + encodeURIComponent(id))).revision; } catch (e) { toast('The profile ' + id + ' could not be read: ' + e.message, 'err'); return null; }
+  return reviewChanges({ title: 'Delete profile ' + id, saveLabel: 'Delete it', getRevision: () => revision,
+    buildOps: () => [{ label: `Delete profile ${id}`, method: 'DELETE', path: '/api/config/profiles/' + encodeURIComponent(id), forceable: true }],
+    reload: async () => { revision = (await api.get('/api/config/profiles/' + encodeURIComponent(id))).revision; } });
+}
+
+// openProfilePanel({id, label, cur, all, reload, onDeleted, onClose}) -> the
+// side panel of one profile, the same on Profiles and on Test profiles (the
+// owner's walkthrough, build-92 W2): its config, placement and plan; Edit
+// (the one primary button), Duplicate, Promote or Demote, Compare with…,
+// Delete. cur() is its GET /api/profiles row NOW (after a promote the list
+// is read again and the title, sub and buttons follow); all() every row.
+export function openProfilePanel(o) {
+  const { id } = o;
+  let spec, p = null;
+  readSpec(id).then(x => { spec = x; }, () => { spec = null; }).then(() => { if (p && openPanelNow() === p) p.redraw(); });
+  p = openPanel({
+    label: o.label || 'Profile', name: (o.label || 'Profile') + ' ' + id,
+    title: () => { const e = o.cur(); return e ? h('span', { 'data-shown': '' }, profileLabel(e)) : h('span.mono', id); },
+    sub: () => { const e = o.cur(); return e ? [profileLabel(e) !== id ? id : null, shortModel(e.model), e.ctx ? ctx(e.ctx) + ' context' : null].filter(Boolean).join(' · ') : null; },
+    body: () => panelBody(id, o.cur(), spec),
+    foot: () => { const e = o.cur(); return e ? [
+      h('a.btn.pri', { href: href('profiles', [id]), 'data-act': 'edit' }, 'Edit'),
+      h('a.btn', { href: href('profiles', ['new'], { from: id }), 'data-act': 'copy' }, 'Duplicate'),
+      profileStage(e) === 'test'
+        ? button('Promote', async () => { if (await changeStage(e, 'production')) o.reload(); }, '', { 'data-act': 'promote', title: 'Make it a production profile (a comment is required)' })
+        : button('Demote', async () => { if (await changeStage(e, 'test')) o.reload(); }, '', { 'data-act': 'demote', title: 'Make it a test profile (a comment is required)' }),
+      button('Compare with…', () => compareDialog(e, o.all()), '', { 'data-act': 'compare', title: 'Its settings beside any other profile: read only' }),
+      h('span.grow'),
+      button('Delete', async () => { const r = await deleteProfile(id); if (r && r.saved) o.onDeleted(r); }, 'dng', { 'data-act': 'delete' }),
+    ] : null; },
+    onClose: o.onClose,
+  });
+  return p;
+}
+
+// ---------- Compare with… (build-92 W2) ----------
+
+// show a setting's value in the compare table
+function cmpValue(v) {
+  if (v === undefined) return h('span.mut', 'not set');
+  if (v === true) return h('span', 'set');
+  if (Array.isArray(v)) return v.length ? h('span.mono', v.join(', ')) : h('span.mut', 'empty');
+  if (v && typeof v === 'object') return h('span.mono', JSON.stringify(v));
+  return h('span.mono', String(v));
+}
+// the need a dry plan gives (POST /api/plan): the figure and how it was worked out
+function cmpNeed(r) {
+  if (!r || r.status !== 'fulfilled') return h('span.mut', { title: r && r.reason ? r.reason.message : '' }, 'no plan');
+  const v = r.value || {};
+  if (!v.need_mib) return h('span.mut', v.reason ? plainReason(v.reason) : 'not known');
+  return h('span', { title: mib(v.need_mib) + (v.need_basis ? ' · ' + v.need_basis : '') }, h('span.mono', gb(v.need_mib)), v.need_basis ? h('span.mut', ' · ' + plainBasis(v.need_basis)) : null);
+}
+const cmpLabel = key => (key.startsWith('extra_args ') ? h('span', 'Extra argument ', h('span.mono', key.slice(11))) : LABELS[key] || key);
+
+// compareDialog(e, all): pick ANY profile (search; production and test) and
+// see "Setting | this profile | the other": the differences only, or every
+// setting with "Show all settings"; extra arguments flag by flag
+// (core/profilediff.js); the two dry plans' need side by side. Read only:
+// two profile reads and two dry plans, no write and no route of its own.
+export function compareDialog(e, all) {
+  let q = '', other = null, showAll = false, got = null, err = '', seq = 0;
+  const pool = () => (all || []).filter(x => x.id !== e.id);
+  const list = h('div.cmp-picks', { 'data-cmp-picks': '' });
+  const result = h('div.cmp-result');
+  const search = h('input.input', { type: 'search', placeholder: 'Search any profile: name, id or model', 'aria-label': 'Profile to compare with', 'data-cmp-search': '',
+    oninput: ev => { q = ev.target.value; drawList(); } });
+  function drawList() {
+    const s = q.trim().toLowerCase();
+    // the exact id first, then ids that start with the search, then the rest
+    const rank = x => (x.id.toLowerCase() === s ? 0 : x.id.toLowerCase().startsWith(s) ? 1 : 2);
+    const hits = pool().filter(x => !s || x.id.toLowerCase().includes(s) || profileLabel(x).toLowerCase().includes(s) || String(x.model || '').toLowerCase().includes(s))
+      .map((x, i) => [rank(x), i, x]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(r => r[2]);
+    list.replaceChildren(...hits.slice(0, 8).map(x => h('button', { type: 'button', class: 'cmp-pick' + (other && other.id === x.id ? ' on' : ''), 'data-pick': x.id, onclick: () => pick(x) },
+      h('span', profileLabel(x)), h('span.mut', ' · ' + (profileStage(x) === 'test' ? 'test' : 'production'))),
+    ), hits.length > 8 ? h('span.mut', '+ ' + num(hits.length - 8) + ' more: type to narrow') : null, !hits.length ? h('span.mut', 'No profile matches') : null);
+  }
+  function drawResult() {
+    if (!other) { result.replaceChildren(h('p.mut', 'Pick a profile to compare with.')); return; }
+    if (err) { result.replaceChildren(banner('err', ['The profiles could not be read: ', err])); return; }
+    if (!got) { result.replaceChildren(skeleton(4)); return; }
+    const rows = profileDiff(got.sa, got.sb, Object.keys(LABELS));
+    const diff = rows.filter(r => !r.same);
+    const shown = showAll ? rows : diff;
+    result.replaceChildren(
+      h('div.row', { style: 'gap:10px' }, toggle(showAll, v => { showAll = v; drawResult(); }, 'Show all settings'), h('span', 'Show all settings'),
+        h('span.mut', { 'data-diff-count': String(diff.length) }, diff.length ? plural(diff.length, 'setting') + ' differ' : 'The settings are the same')),
+      h('table.tbl.cmp-tbl', { 'data-compare': other.id },
+        h('thead', h('tr', h('th', { scope: 'col' }, 'Setting'), h('th', { scope: 'col' }, profileLabel(e)), h('th', { scope: 'col' }, profileLabel(other)))),
+        h('tbody',
+          h('tr', { 'data-need': '' }, h('td', 'What it needs (the plan now)'), h('td', cmpNeed(got.pa)), h('td', cmpNeed(got.pb))),
+          shown.map(r => h('tr', { 'data-key': r.key, 'data-flag': r.key.startsWith('extra_args ') ? r.key.slice(11) : null, 'data-diff': r.same ? 'same' : 'diff', 'data-only': r.only || null },
+            h('td', cmpLabel(r.key)), h('td', cmpValue(r.a)), h('td', cmpValue(r.b)))))));
+  }
+  async function pick(x) {
+    other = x; got = null; err = ''; const my = ++seq;
+    drawList(); drawResult();
+    try {
+      const [sa, sb] = await Promise.all([readSpec(e.id), readSpec(x.id)]);
+      const [pa, pb] = await Promise.allSettled([api.send('POST', '/api/plan', { model: e.id }), api.send('POST', '/api/plan', { model: x.id })]);
+      if (my === seq) got = { sa, sb, pa, pb };
+    } catch (er) { if (my === seq) err = er.message; }
+    if (my === seq) drawResult();
+  }
+  drawList(); drawResult();
+  return dialog({ title: h('span', 'Compare ', h('span', { 'data-shown': '' }, profileLabel(e)), ' with…'), wide: true,
+    body: h('div.col', { style: 'gap:12px', 'data-dlg': 'compare' }, search, list, result),
+    actions: [{ label: 'Close', value: undefined }] });
 }
 
 // ---------- the view ----------
@@ -316,96 +518,15 @@ registerView({
       });
     }
 
-    // ---- delete (from the panel) ----
-    async function remove(id) {
-      let revision = 0;
-      try { revision = (await api.get('/api/config/profiles/' + encodeURIComponent(id))).revision; } catch (e) { saved = null; error = e.message; view.refresh(); return; }
-      const r = await reviewChanges({ title: 'Delete profile ' + id, saveLabel: 'Delete it', getRevision: () => revision,
-        buildOps: () => [{ label: `Delete profile ${id}`, method: 'DELETE', path: '/api/config/profiles/' + encodeURIComponent(id), forceable: true }],
-        reload: async () => { revision = (await api.get('/api/config/profiles/' + encodeURIComponent(id))).revision; } });
-      if (r && r.saved) { saved = r; go({ profile: null }); load(); }
-    }
-
-    // ---- the side panel: one profile, its placements ----
-    // whereText(profile, plan, instance): names only where they are given
-    // (the page rule): a forced profile's own zones, or the machines a loaded
-    // instance is on. An automatic profile's plan picks among equal machines
-    // and can pick others a moment later, so it says how many.
-    function whereText(e, plan, inst) {
-      const st = state.status || {};
-      if ((e.force_nodes || []).length || e.placement === 'forced') return (plan.nodes || []).length ? [h('span.mut', 'on'), nodeChips(plan.nodes)] : null;
-      const on = inst ? (inst.nodes || []).map(n => nodeName(st, n && typeof n === 'object' ? n.id : n)) : [];
-      if (on.length) return h('span.row', { style: 'gap:8px', 'data-loaded-on': String(on.length) }, h('span.mut', 'Loaded on'), nodeChips(on));
-      const n = (plan.nodes || []).length;
-      // loaded or loading but its instance not in the status yet: a count, not "would load"
-      const now = plan.action === 'serve' || plan.action === 'wait';
-      return n ? h('span', { 'data-would': String(n) }, (now ? 'on ' : 'would load on ') + machines(st, n)) : null;
-    }
-    function panelBody(id) {
-      const e = (list || []).find(x => x.id === id);
-      if (!e) return [empty('There is no profile ' + id, 'It may have been deleted, or its name changed.')];
-      const plan = e.plan || {};
-      const [label, kind, why] = verdict(plan);
-      const inst = ((state.status && state.status.instances) || []).find(i => i.profile === id);
-      const force = e.force_nodes || [];
-      return [
-        e.description ? h('p.prf-desc', { key: 'desc' }, e.description) : null,
-        h('section.prf-part', { key: 'facts' }, facts([
-          ['Model', h('span', { title: e.model }, shortModel(e.model) || e.model || '–')],
-          ['Model file', h('span', { title: e.model }, e.model || '–')],
-          e.kind === 'command' ? ['Kind', 'command'] : ['Context', e.ctx ? ctx(e.ctx) : '–'],
-          (e.parallel || 1) > 1 ? ['Parallel slots', String(e.parallel)] : null,
-          (e.aliases || []).length ? ['Aliases', e.aliases.join(', ')] : null,
-          e.needs_mib ? ['Memory need', h('span', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : '') }, gb(e.needs_mib))] : null,
-          e.needs_mib && e.needs_basis ? ['Worked out', h('span', { title: e.needs_basis }, plainBasis(e.needs_basis))] : null,
-          // the restore points it keeps on the hosting machine, and where the number comes from (build-92 W1)
-          restorePoints(e) ? ['Restore points', h('span', { 'data-restore-points': String(restorePoints(e).n), title: e.host_memory.checkpoints_from || null },
-            num(restorePoints(e).n) + ' (' + num(Math.round(restorePoints(e).mib || 0)) + ' MB)' + (restorePoints(e).own ? ' · its own, from its extra arguments' : ' · the cluster default'))] : null,
-          ['Stage', h('span', { 'data-stage': profileStage(e) }, profileStage(e) === 'test' ? 'Test (' + testWhy(e) + ')' : 'Production' + (e.stage_set ? '' : ' (not marked: the rule)'))],
-          e.display_name ? ['Display name', e.display_name] : null,
-          ['Id', h('span.mono', e.id)],
-          ['Generated', e.generated ? 'yes, for benchmarks' : 'no, made by hand'],
-        ])),
-        h('section.prf-part', { key: 'placement' }, h('h3', 'Placement'),
-          force.length ? [h('div', h('span.mut', 'Forced on ' + plural(force.length, 'zone') + ': '), nodeChips(force)),
-            (e.tensor_split || []).length ? h('div', h('span.mut', 'Tensor split: '), h('span.mono', e.tensor_split.join(' / '))) : null]
-            : h('div', 'Automatic: the scheduler picks the zones at each load.', (e.allow_tiers || []).length ? h('span.mut', ' Tiers ' + e.allow_tiers.join(', ') + ' only.') : null),
-          e.host === 'node' ? h('div', hostLine(e)) : null,
-          e.blocked_by_exclusion ? h('div.err-t', 'Blocked: a forced zone is switched off (' + e.blocked_by_exclusion + ').') : null),
-        h('section.prf-part', { key: 'plan' }, h('h3', 'Where it would go now'),
-          h('div.row', { style: 'gap:8px' }, badge(label, kind, why), whereText(e, plan, inst), plan.tight_fit ? badge('Tight fit', 'load') : null),
-          plan.reason ? h('p.mut', { title: plan.reason }, plainReason(plan.reason)) : null,
-          plan.warning ? h('p.warn-t', { title: plan.warning }, plainReason(plan.warning)) : null,
-          inst ? h('p', inst.stale_profile ? 'A model of this profile is loaded with an older definition.' : 'A model of this profile is loaded now.') : null,
-          h('a', { href: href('placement', [id]) }, 'Open in Placement preview')),
-      ];
-    }
     function syncPanel() {
       const id = route.query.profile || '';
       if (!id || route.rest.length) { if (panel) { const p = panel; panel = null; panelId = ''; p.close(); } return; }
       if (panel && panelId === id && openPanelNow() === panel) { panel.redraw(); return; }
       if (!list) return;
       panelId = id;
-      // the profile as the list holds it NOW: after a promote the list is read
-      // again and the title, sub and buttons follow (the owner's note: it
-      // "loses the TEST - part automatically")
-      const cur = () => (list || []).find(x => x.id === id);
-      panel = openPanel({
-        label: 'Profile', name: 'Profile ' + id,
-        title: () => { const e = cur(); return e ? h('span', { 'data-shown': '' }, profileLabel(e)) : h('span.mono', id); },
-        sub: () => { const e = cur(); return e ? [profileLabel(e) !== id ? id : null, shortModel(e.model), e.ctx ? ctx(e.ctx) + ' context' : null].filter(Boolean).join(' · ') : null; },
-        body: () => panelBody(id),
-        foot: () => { const e = cur(); return e ? [
-          h('a.btn.pri', { href: href('profiles', [id]), 'data-act': 'edit' }, 'Edit'),
-          h('a.btn', { href: href('profiles', ['new'], { from: id }), 'data-act': 'copy' }, 'Duplicate'),
-          profileStage(e) === 'test'
-            ? button('Promote', async () => { if (await changeStage(e, 'production')) load(); }, '', { 'data-act': 'promote', title: 'Make it a production profile (a comment is required)' })
-            : button('Demote', async () => { if (await changeStage(e, 'test')) load(); }, '', { 'data-act': 'demote', title: 'Make it a test profile (a comment is required)' }),
-          h('span.grow'),
-          button('Delete', () => remove(id), 'dng', { 'data-act': 'delete' }),
-        ] : null; },
-        onClose: () => { if (panelId === id) { panel = null; panelId = ''; if (route.query.profile === id) go({ profile: null }); } },
-      });
+      panel = openProfilePanel({ id, label: 'Profile', cur: () => (list || []).find(x => x.id === id), all: () => list || [], reload: load,
+        onDeleted: r => { saved = r; go({ profile: null }); load(); },
+        onClose: () => { if (panelId === id) { panel = null; panelId = ''; if (route.query.profile === id) go({ profile: null }); } } });
     }
 
     // ---- the list ----

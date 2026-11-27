@@ -205,6 +205,7 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:var(--w-bod
 .btn.dng.solid{background:var(--failed);border-color:var(--failed);color:#fff}
 .btn.sm{height:26px;padding:0 10px;font-size:12px;border-radius:7px}
 .btn.lg{height:36px;padding:0 15px}
+.btn.plain{font-weight:var(--w-body)}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--link);padding:0 8px}
 .btn:disabled,.btn[aria-disabled=true]{opacity:.45;cursor:not-allowed}
 .btn.icon{width:32px;padding:0}
@@ -1905,3 +1906,10 @@ a.bp-view:hover{background:var(--hover-bg)}
   .ed-acts{width:100%;margin-left:0}
   .ed-comment{flex:1 1 100%;width:auto}
 }
+/* Compare with… (build-92 W2): the pick list and the table */
+.cmp-picks{display:flex;flex-wrap:wrap;gap:6px}
+.cmp-pick{border:1px solid var(--ctl-border);background:var(--surface);color:var(--ink);border-radius:7px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer}
+.cmp-pick.on{border-color:var(--accent);background:var(--hover-bg)}
+.cmp-tbl td{vertical-align:top;overflow-wrap:anywhere}
+.cmp-tbl tr[data-diff=diff] td:first-child{color:var(--ink)}
+.cmp-tbl tr[data-need] td{background:var(--hover-bg)}
