@@ -1,0 +1,10 @@
+# Lines that may name a brand or a console: "path: text the line contains".
+# Keep this short; every entry says why.
+
+# Bench runs stored before build-92 carry the old refusal sentence; the
+# short reason must still recognise it.
+internal/bench/reasonshort.go: strings.Contains(low, "is not a console")
+
+# The old install-script flag, accepted and ignored for one release
+# (build-92); remove with the flag.
+internal/api/pending.go: const oldOverrideFlag = "--not-a-console"
