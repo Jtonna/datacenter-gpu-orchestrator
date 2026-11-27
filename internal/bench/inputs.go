@@ -17,12 +17,12 @@ import (
 // Recipes (data model step 2): a step that is the use of a recipe has
 // Spec.Recipe and Spec.Applied set and a generated profile id. Just before the
 // step the runner makes that profile from the inputs: the model, the context,
-// the consoles the placement names (force_nodes), and the options. Consoles
+// the zones the placement names (force_nodes), and the options. Placeable zones
 // are the agent nodes that are not excluded and are not the scheduler's own
-// machine (decision D29: placements offer consoles only).
+// machine (decision D29: placements offer agent zones only).
 
-// Console is a node a placement may use.
-type Console struct {
+// Zone is a node a placement may use.
+type Zone struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Placeable   bool   `json:"placeable"`
@@ -34,9 +34,9 @@ type Console struct {
 // inputs. HTTPAPI has it; a scripted API without it fails every use of a
 // recipe with a plain error.
 type ProfileMaker interface {
-	// Consoles lists the consoles (agent nodes, not excluded, not the
+	// Zones lists the placeable zones (agent nodes, not excluded, not the
 	// scheduler's machine), whether each can take a load now.
-	Consoles(ctx context.Context) ([]Console, error)
+	Zones(ctx context.Context) ([]Zone, error)
 	// EnsureProfile creates or replaces a generated profile so that it has
 	// these settings; a profile that is already so is left alone.
 	EnsureProfile(ctx context.Context, id string, spec map[string]any) error
@@ -45,10 +45,10 @@ type ProfileMaker interface {
 // ErrPlacement is a placement that cannot be met now: the step is refused.
 var ErrPlacement = errors.New("placement refused")
 
-// placeOn picks the consoles of a placement: nil for auto (Potluck chooses).
-func placeOn(p benchspec.Placement, cons []Console) ([]string, error) {
-	var ok []Console
-	for _, c := range cons {
+// placeOn picks the zones of a placement: nil for auto (Potluck chooses).
+func placeOn(p benchspec.Placement, zs []Zone) ([]string, error) {
+	var ok []Zone
+	for _, c := range zs {
 		if c.Placeable {
 			ok = append(ok, c)
 		}
@@ -59,7 +59,7 @@ func placeOn(p benchspec.Placement, cons []Console) ([]string, error) {
 		}
 		return ok[i].Name < ok[j].Name
 	})
-	names := func(cs []Console) []string {
+	names := func(cs []Zone) []string {
 		out := make([]string, len(cs))
 		for i, c := range cs {
 			out[i] = c.Name
@@ -71,13 +71,13 @@ func placeOn(p benchspec.Placement, cons []Console) ([]string, error) {
 		return nil, nil
 	case benchspec.PlaceAll:
 		if len(ok) == 0 {
-			return nil, fmt.Errorf("%w: all consoles: no console can take a load now", ErrPlacement)
+			return nil, fmt.Errorf("%w: all zones: no zone can take a load now", ErrPlacement)
 		}
 		sort.SliceStable(ok, func(i, j int) bool { return ok[i].Name < ok[j].Name })
 		return names(ok), nil
 	case benchspec.PlaceAny:
 		if len(ok) < p.N {
-			return nil, fmt.Errorf("%w: any %d consoles: only %d can take a load now", ErrPlacement, p.N, len(ok))
+			return nil, fmt.Errorf("%w: any %d zones: only %d can take a load now", ErrPlacement, p.N, len(ok))
 		}
 		chosen := ok[:p.N]
 		sort.SliceStable(chosen, func(i, j int) bool { return chosen[i].Name < chosen[j].Name })
@@ -85,21 +85,21 @@ func placeOn(p benchspec.Placement, cons []Console) ([]string, error) {
 	case benchspec.PlaceNodes:
 		var out []string
 		for _, want := range p.Nodes {
-			var found *Console
-			for i := range cons {
-				if cons[i].Name == want || cons[i].ID == want {
-					found = &cons[i]
+			var found *Zone
+			for i := range zs {
+				if zs[i].Name == want || zs[i].ID == want {
+					found = &zs[i]
 				}
 			}
 			switch {
 			case found == nil:
-				return nil, fmt.Errorf("%w: %q is not a console (an agent node that is not excluded and not the scheduler's machine)", ErrPlacement, want)
+				return nil, fmt.Errorf("%w: %q is not a placeable zone (an agent zone that is not excluded and not the scheduler's machine)", ErrPlacement, want)
 			case !found.Placeable:
 				why := found.Unplaced
 				if why == "" {
 					why = "not placeable"
 				}
-				return nil, fmt.Errorf("%w: console %q cannot take a load now (%s)", ErrPlacement, want, why)
+				return nil, fmt.Errorf("%w: zone %q cannot take a load now (%s)", ErrPlacement, want, why)
 			}
 			out = append(out, found.Name)
 		}
@@ -108,7 +108,7 @@ func placeOn(p benchspec.Placement, cons []Console) ([]string, error) {
 	return nil, fmt.Errorf("%w: placement %q is not known", ErrPlacement, p.String())
 }
 
-// ProfileSpecOf is the generated profile's settings for these inputs on these consoles.
+// ProfileSpecOf is the generated profile's settings for these inputs on these zones.
 func ProfileSpecOf(in benchspec.Inputs, nodes []string) map[string]any {
 	spec := map[string]any{"model": in.Model, "ctx": in.Ctx, "generated": true, "stage": "test"}
 	if len(nodes) > 0 {
@@ -135,11 +135,11 @@ func (x *suiteExec) makeProfile(ctx context.Context, b *benchspec.Benchmark) err
 	}
 	var nodes []string
 	if p := b.Applied.Place(); p.Mode != benchspec.PlaceAuto {
-		cons, err := pm.Consoles(ctx)
+		zs, err := pm.Zones(ctx)
 		if err != nil {
-			return fmt.Errorf("list the consoles: %w", err)
+			return fmt.Errorf("list the zones: %w", err)
 		}
-		if nodes, err = placeOn(p, cons); err != nil {
+		if nodes, err = placeOn(p, zs); err != nil {
 			return err
 		}
 	}
@@ -151,8 +151,8 @@ func (x *suiteExec) makeProfile(ctx context.Context, b *benchspec.Benchmark) err
 
 // ---- HTTP ----
 
-// Consoles implements ProfileMaker: GET /api/nodes.
-func (h *HTTPAPI) Consoles(ctx context.Context) ([]Console, error) {
+// Zones implements ProfileMaker: GET /api/nodes.
+func (h *HTTPAPI) Zones(ctx context.Context) ([]Zone, error) {
 	resp, err := h.do(ctx, "GET", "/api/nodes", nil, nil)
 	if err != nil {
 		return nil, err
@@ -179,12 +179,12 @@ func (h *HTTPAPI) Consoles(ctx context.Context) ([]Console, error) {
 	if err := json.Unmarshal(raw, &feed); err != nil {
 		return nil, fmt.Errorf("/api/nodes: %w", err)
 	}
-	var out []Console
+	var out []Zone
 	for _, n := range feed.Nodes {
 		if n.Local || n.HostAgent || n.Excluded || n.State != "active" {
 			continue
 		}
-		c := Console{ID: n.ID, Name: n.Name, Placeable: n.Placeable, Unplaced: n.Unplaced}
+		c := Zone{ID: n.ID, Name: n.Name, Placeable: n.Placeable, Unplaced: n.Unplaced}
 		if c.Name == "" {
 			c.Name = n.ID
 		}

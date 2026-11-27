@@ -105,7 +105,7 @@ func Schema() *SchemaDoc {
 	d.Inputs = []Option{
 		{Name: "model", Type: "string", Description: "The model file under the models directory."},
 		{Name: "ctx", Type: "integer", Min: MinInputCtx, Max: MaxInputCtx, Unit: "tokens", Description: "Context size per slot."},
-		{Name: "placement", Type: "string", Default: PlaceAuto, Description: "Where the model goes, consoles only: auto (Potluck chooses), all (every console that can take a load), any:N (N consoles, those with the most available memory), nodes:a,b (these consoles). A placement that cannot be met when the step starts is a refused step."},
+		{Name: "placement", Type: "string", Default: PlaceAuto, Description: "Where the model goes, agent zones only (not the scheduler's machine): auto (Potluck chooses), all (every zone that can take a load), any:N (N zones, those with the most available memory), nodes:a,b (these zones). A placement that cannot be met when the step starts is a refused step."},
 		{Name: "thinking", Type: "boolean", Description: "false turns the model's reasoning off (--reasoning-budget 0); leave it out to keep the model's default."},
 		{Name: "kv_quant", Type: "enum", Values: []any{"f16", "q8_0", "q4_0"}, Default: "f16", Description: "Key-value cache precision; q8_0 and q4_0 need flash_attn."},
 		{Name: "flash_attn", Type: "boolean", Default: false, Description: "Turn flash attention on."},

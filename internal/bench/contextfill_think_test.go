@@ -58,7 +58,7 @@ func TestContextFill_ThinkingModelAnswersWithThinkingOff(t *testing.T) {
 // setting, and a recall cut while thinking says so instead of a bare 0.
 func TestContextFill_ThinkingAskedIsKeptAndACutAnswerSaysWhy(t *testing.T) {
 	api := newFake()
-	api.consoles = consoles()
+	api.zones = placeableZones()
 	think := true
 	id := benchspec.Inputs{Model: "q.gguf", Ctx: 4096, Thinking: &think}.ProfileID()
 	api.prof(id, fakeProf{chatFn: thinksFirst, modelFile: "q.gguf"})

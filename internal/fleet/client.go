@@ -79,7 +79,7 @@ type Options struct {
 	Logger         *slog.Logger     // default slog.Default()
 }
 
-// Client is the fleet console client, the local probe and the merged node
+// Client is the legacy fleet feed client, the local probe and the merged node
 // view. Create it with New and run it with Run; it implements View.
 type Client struct {
 	cfg  atomic.Pointer[config.Config]
@@ -249,7 +249,7 @@ func (c *Client) Resolve(name string) (core.NodeID, error) {
 }
 
 // FetchNode implements View. For the local node it runs the probe once; if
-// the probe cannot run it asks the console like for any other node.
+// the probe cannot run it asks the feed like for any other node.
 func (c *Client) FetchNode(ctx context.Context, id core.NodeID) (core.Node, error) {
 	var isLocal bool
 	var memberID string
@@ -274,7 +274,7 @@ func (c *Client) FetchNode(ctx context.Context, id core.NodeID) (core.Node, erro
 			}
 			return n, nil
 		}
-		// Probe unavailable: ask the console about the fleet member for the
+		// Probe unavailable: ask the feed about the fleet member for the
 		// local node, never about the local id itself.
 		if memberID == "" {
 			return core.Node{}, fmt.Errorf("%w: local node %s has no fleet member and the probe failed", ErrNotFound, id)
@@ -491,7 +491,7 @@ func (c *Client) checkStaleLocked() {
 	switch stale := age > c.conf().Fleet.StaleAfter; {
 	case stale && !c.staleLogged:
 		c.staleLogged = true
-		c.opts.Logger.Warn("fleet view stale: remote nodes are ineligible until the console is heard from",
+		c.opts.Logger.Warn("fleet view stale: remote nodes are ineligible until the fleet feed is heard from",
 			"age", age.Round(time.Second), "stale_after", c.conf().Fleet.StaleAfter)
 	case !stale && c.staleLogged:
 		c.staleLogged = false
@@ -506,7 +506,7 @@ func (c *Client) feedFailed(err error) {
 	defer c.mu.Unlock()
 	if !c.feedDownLogged {
 		c.feedDownLogged = true
-		c.opts.Logger.Warn("fleet console unreachable: feed disconnected, polling until it is back", "url", c.base, "err", err)
+		c.opts.Logger.Warn("fleet feed unreachable: feed disconnected, polling until it is back", "url", c.base, "err", err)
 	}
 	c.checkStaleLocked()
 }
@@ -741,7 +741,7 @@ func (c *Client) stream(ctx context.Context) (gotEvent bool) {
 	if ctx.Err() == nil {
 		err := sc.Err()
 		if err == nil {
-			err = errors.New("stream closed by the console")
+			err = errors.New("stream closed by the fleet feed")
 		}
 		c.feedFailed(err)
 	}

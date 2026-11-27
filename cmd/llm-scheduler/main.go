@@ -126,7 +126,7 @@ func warnSlidingWindow(cfg *config.Config, log *slog.Logger) {
 	}
 }
 
-// checkFleet logs a clear error when the fleet console cannot be reached at
+// checkFleet logs a clear error when the legacy fleet feed cannot be reached at
 // startup. The scheduler keeps running: the local node still works and the
 // fleet client keeps retrying. LEGACY: fleet membership mode only, kept
 // until phase 7.
@@ -151,7 +151,7 @@ func checkFleet(ctx context.Context, cfg *config.Config, log *slog.Logger) {
 	if ctx.Err() != nil {
 		return
 	}
-	log.Error("cannot reach the fleet console; remote nodes are unavailable until it answers (check the host firewall rule for port 8090). Still running: the local node works and the connection is retried",
+	log.Error("cannot reach the fleet feed at "+cfg.Fleet.URL+"; remote nodes are unavailable until it answers (check that the feed runs and that a firewall lets this machine reach that address). Still running: the local node works and the connection is retried",
 		"url", cfg.Fleet.URL, "err", err)
 }
 
@@ -327,7 +327,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	}
 
 	// The node view: the agents' registrations (membership agents), or the
-	// fleet feed. With agents nothing connects to a fleet console and no log
+	// fleet feed. With agents nothing connects to a fleet feed and no log
 	// line names one.
 	var view fleet.View
 	fleetDone := make(chan struct{})

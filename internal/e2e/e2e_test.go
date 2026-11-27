@@ -423,12 +423,12 @@ func waitGone(t *testing.T, u string) {
 	}
 }
 
-// 11. With the fleet console unreachable, a clear error is logged and the
+// 11. With the fleet feed unreachable, a clear error is logged and the
 // local node still serves.
 func TestFleetUnreachableStillServesLocalNode(t *testing.T) {
 	c := startCluster(t, options{profiles: profilesBasic, fleetURL: "http://127.0.0.1:1"})
 	c.waitFor("the fleet error in the log", 10*time.Second, func() bool {
-		return strings.Contains(c.stderr.String(), "cannot reach the fleet console")
+		return strings.Contains(c.stderr.String(), "cannot reach the fleet feed")
 	})
 	if status, body := c.chat("local-only", false); status != 200 {
 		t.Fatalf("local model with the fleet down: %d %s", status, body)

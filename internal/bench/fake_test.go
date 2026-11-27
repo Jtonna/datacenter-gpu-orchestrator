@@ -109,9 +109,9 @@ type fakeAPI struct {
 	strictUnload bool
 	linger       time.Duration
 	stuck        map[string]int
-	// ProfileMaker: the consoles the node feed lists, and the profiles the
+	// ProfileMaker: the zones the node feed lists, and the profiles the
 	// runner made from a recipe's inputs (id to its last settings).
-	consoles []Console
+	zones []Zone
 	made     map[string]map[string]any
 	madeN    int // EnsureProfile calls
 	makeErr  error
@@ -134,11 +134,11 @@ type fakeAPI struct {
 	reports     map[string]fakeReport
 }
 
-func (f *fakeAPI) Consoles(ctx context.Context) ([]Console, error) {
+func (f *fakeAPI) Zones(ctx context.Context) ([]Zone, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.log("consoles")
-	return append([]Console(nil), f.consoles...), nil
+	f.log("zones")
+	return append([]Zone(nil), f.zones...), nil
 }
 
 func (f *fakeAPI) EnsureProfile(ctx context.Context, id string, spec map[string]any) error {

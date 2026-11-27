@@ -11,8 +11,8 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
-// The owner's counter for sharing a console (potluck-forced-sharing-note):
-// how often a request's ONLY option was a console another instance holds.
+// The owner's counter for sharing a zone (potluck-forced-sharing-note):
+// how often a request's ONLY option was a zone another instance holds.
 // A queue entry (the requests for one profile waiting together) becomes a
 // case the first time it cannot start on free nodes and:
 //   - a forced profile: one of its forced nodes is held by another
@@ -56,7 +56,7 @@ type occCase struct {
 }
 
 // noteOccupied opens entry e's case when its only option is an occupied
-// console. Called each time e could not start on free nodes; a case is
+// zone. Called each time e could not start on free nodes; a case is
 // opened once.
 func (c *schedCore) noteOccupied(e *entry) {
 	if !occupiedCounterOn || e.occ != nil || len(e.waiters) == 0 {
@@ -67,7 +67,7 @@ func (c *schedCore) noteOccupied(e *entry) {
 		return
 	}
 	e.occ = &occCase{began: c.now, nodes: nodes, occupants: occupants}
-	c.log.Info("only an occupied console can take the request", "profile", e.prof.Name,
+	c.log.Info("only an occupied zone can take the request", "profile", e.prof.Name,
 		"nodes", nodeIDStrings(nodes), "occupants", occupants, "waiters", len(e.waiters))
 }
 

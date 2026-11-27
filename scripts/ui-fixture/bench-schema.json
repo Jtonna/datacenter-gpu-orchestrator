@@ -585,7 +585,7 @@
    "name": "placement",
    "type": "string",
    "default": "auto",
-   "description": "Where the model goes, consoles only: auto (Potluck chooses), all (every console that can take a load), any:N (N consoles, those with the most available memory), nodes:a,b (these consoles). A placement that cannot be met when the step starts is a refused step."
+   "description": "Where the model goes, agent zones only (not the scheduler's machine): auto (Potluck chooses), all (every zone that can take a load), any:N (N zones, those with the most available memory), nodes:a,b (these zones). A placement that cannot be met when the step starts is a refused step."
   },
   {
    "name": "thinking",

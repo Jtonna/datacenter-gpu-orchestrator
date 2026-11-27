@@ -40,14 +40,14 @@ const (
 // Placement modes.
 const (
 	PlaceAuto  = "auto"  // let Potluck choose
-	PlaceAll   = "all"   // every console that can take a load
-	PlaceAny   = "any"   // any N consoles
-	PlaceNodes = "nodes" // these consoles
+	PlaceAll   = "all"   // every zone that can take a load
+	PlaceAny   = "any"   // any N zones
+	PlaceNodes = "nodes" // these zones
 )
 
 var nodeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 
-// Placement says where the model of a recipe goes. Consoles only (decision
+// Placement says where the model of a recipe goes. Agent zones only (decision
 // D29): the runner picks among the agent nodes that are not excluded and are
 // not the scheduler's own machine. Written as a string: "auto", "all",
 // "any:2", "nodes:ps5-1,ps5-4"; an object {"any": 2}, {"all": true},
@@ -81,7 +81,7 @@ func (p Placement) Validate() error {
 		}
 	case PlaceNodes:
 		if len(p.Nodes) == 0 || len(p.Nodes) > MaxPlacementNodes {
-			return fmt.Errorf("placement nodes: needs 1 to %d console names", MaxPlacementNodes)
+			return fmt.Errorf("placement nodes: needs 1 to %d zone names", MaxPlacementNodes)
 		}
 		seen := map[string]bool{}
 		for _, n := range p.Nodes {

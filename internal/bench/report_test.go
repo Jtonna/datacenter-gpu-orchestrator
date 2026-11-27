@@ -13,11 +13,11 @@ import (
 // gives the same report.
 func TestReports(t *testing.T) {
 	api := newFake().prof("gemma", fakeProf{})
-	api.consoles = consoles()
+	api.zones = placeableZones()
 	tm := newTestMgr(t, api)
 	tm.bench(coldLoadRecipe)
 	tm.suite(`{"id":"g","cooldown_s":0,"only_when_idle":false,"benchmarks":[
-		{"benchmark":"cold-load","inputs":{"model":"a.gguf"},"matrix":{"placement":["any:2","nodes:ps5-3"]}},
+		{"benchmark":"cold-load","inputs":{"model":"a.gguf"},"matrix":{"placement":["any:2","nodes:node-3"]}},
 		{"benchmark":"cold-load","inputs":{"model":"a.gguf","placement":"any:2"}}]}`)
 	r := tm.finished(tm.run("g").ID)
 	ms, err := tm.store.RunMeasurements(r.ID, MeasureQuery{})
@@ -33,7 +33,7 @@ func TestReports(t *testing.T) {
 	if sum.Kind != ReportSummary || sum.Headline == nil || sum.Headline.Steps != 3 || sum.Headline.Completed != 2 || sum.Headline.Refused != 1 || sum.Headline.Ran != 3 {
 		t.Fatalf("headline %+v", sum.Headline)
 	}
-	if len(sum.Issues) != 1 || sum.Issues[0].Kind != IssuePlacementRefused || !strings.Contains(sum.Issues[0].Text, `console "ps5-3" cannot take a load now (paused)`) {
+	if len(sum.Issues) != 1 || sum.Issues[0].Kind != IssuePlacementRefused || !strings.Contains(sum.Issues[0].Text, `zone "node-3" cannot take a load now (paused)`) {
 		t.Fatalf("issues %+v", sum.Issues)
 	}
 	if len(sum.Index) != 3 || sum.Index[1].Outcome != OutcomeRefused || sum.Index[2].Report != "/api/bench/runs/"+r.ID+"/report?step=2" {

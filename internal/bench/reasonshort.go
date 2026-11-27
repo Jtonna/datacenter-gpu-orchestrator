@@ -22,12 +22,14 @@ func ShortReason(outcome, reason string, nodeCount int) string {
 	switch {
 	case strings.Contains(low, "does not fit"), strings.Contains(low, "would_not_fit"), strings.Contains(low, "would not fit"):
 		return "Does not fit" + where
+	// before "excluded": the sentence explains itself with "not excluded".
+	// "is not a console" is the sentence of runs stored before build-92.
+	case strings.Contains(low, "is not a placeable zone"), strings.Contains(low, "is not a console"):
+		return "Not a placeable zone"
 	case outcome == OutcomeRefusedByExclusion || strings.Contains(low, "excluded"):
 		return "A zone is excluded"
 	case strings.Contains(low, "can take a load now"), strings.Contains(low, "cannot take a load now"):
 		return "Not enough zones free"
-	case strings.Contains(low, "is not a console"):
-		return "Not a console"
 	case strings.Contains(low, "backoff"), strings.Contains(low, "backing off"):
 		return "Backing off after a failure"
 	case strings.Contains(low, "busy"), strings.Contains(low, "not idle"):
