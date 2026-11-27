@@ -456,8 +456,8 @@ func installScriptText(z PendingZone, host string) string {
 		"# Made by Potluck at " + host + "; valid until " + z.ExpiresAt + ". Run as root.\n" +
 		"# It prints what it will do first; --dry-run prints that and stops.\n" +
 		"# Extra arguments are passed to potluck-agent-setup (for example --allow-from or --no-firewall).\n" +
-		"# It refuses to run on a console (consoles are set up by the fleet console)\n" +
-		"# and on the machine that runs the Potluck scheduler.\n" +
+		"# It refuses to run on the machine that runs the Potluck scheduler, on a machine set up\n" +
+		"# by the Potluck starter and on a machine whose root file system is in memory.\n" +
 		"set -eu\n" +
 		"PATH=${POTLUCK_INSTALL_TEST_PATH:+$POTLUCK_INSTALL_TEST_PATH:}$PATH\n" +
 		"root=${POTLUCK_INSTALL_TEST_ROOT:-}\n" +
@@ -466,7 +466,6 @@ func installScriptText(z PendingZone, host string) string {
 		"refuse() { echo \"potluck: $*\" >&2; exit 1; }\n" +
 		"# Arguments: --dry-run prints the plan and stops; the rest go to potluck-agent-setup.\n" +
 		"dry=no\n" +
-		"override=no\n" +
 		"n=$#\n" +
 		"while [ \"$n\" -gt 0 ]; do\n" +
 		"\ta=$1\n" +
@@ -474,34 +473,23 @@ func installScriptText(z PendingZone, host string) string {
 		"\tn=$((n - 1))\n" +
 		"\tcase $a in\n" +
 		"\t--dry-run) dry=yes ;;\n" +
-		"\t" + consoleOverrideFlag + ") override=yes ;;\n" +
+		"\t" + oldOverrideFlag + ") ;; # accepted and ignored (build-92; it has no effect)\n" +
 		"\t*) set -- \"$@\" \"$a\" ;;\n" +
 		"\tesac\n" +
 		"done\n" +
-		"# A console. Any one marker refuses: the fleet console's payload version file or its units,\n" +
-		"# the starter settings, a root file system in memory, or the console GPU.\n" +
-		"console=''\n" +
-		"if [ -e \"$root/etc/node-payload-version\" ]; then console='it has the fleet console payload version file (/etc/node-payload-version)'; fi\n" +
-		"for unit in ps5-bootstrap.timer node-agent.service; do\n" +
-		"\tfor d in /etc/systemd/system /run/systemd/system /run/systemd/transient /lib/systemd/system /usr/lib/systemd/system; do\n" +
-		"\t\tif [ -z \"$console\" ] && [ -e \"$root$d/$unit\" ]; then console=\"it has the fleet console unit $unit ($d)\"; fi\n" +
-		"\tdone\n" +
-		"done\n" +
-		"if [ -z \"$console\" ] && [ -e \"$root/etc/potluck/starter.env\" ]; then console='it has the console starter settings (/etc/potluck/starter.env)'; fi\n" +
-		"if [ -z \"$console\" ] && [ -r \"$root/proc/mounts\" ]; then\n" +
+		"# Two kinds of machine are not installed by this script, before anything is downloaded:\n" +
+		"# a machine set up by the Potluck starter, and one whose root file system is in memory\n" +
+		"# (an install would not survive a restart; such machines use potluck-starter.sh).\n" +
+		"why=''\n" +
+		"if [ -e \"$root/etc/potluck/starter.env\" ]; then\n" +
+		"\trefuse 'this machine is set up by the Potluck starter (it has /etc/potluck/starter.env): use the starter (potluck-starter.sh), not this script. Nothing was changed.'\n" +
+		"fi\n" +
+		"if [ -r \"$root/proc/mounts\" ]; then\n" +
 		"\trootfs=''\n" +
 		"\twhile read -r _dev mnt fs _rest; do if [ \"$mnt\" = / ]; then rootfs=$fs; fi; done <\"$root/proc/mounts\"\n" +
-		"\tcase $rootfs in tmpfs|ramfs) console=\"its root file system is in memory ($rootfs)\" ;; esac\n" +
+		"\tcase $rootfs in tmpfs|ramfs) why=$rootfs ;; esac\n" +
 		"fi\n" +
-		"if [ -z \"$console\" ] && command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | grep -qi oberon; then\n" +
-		"\tconsole='it has the console GPU (Oberon)'\n" +
-		"fi\n" +
-		"# In doubt, refuse: a host name starting with ps5- (unless the override is given).\n" +
-		"name=$(cat \"$root/proc/sys/kernel/hostname\" 2>/dev/null || uname -n 2>/dev/null || echo '')\n" +
-		"if [ -z \"$console\" ] && [ $override = no ]; then\n" +
-		"\tcase $name in ps5-*) console=\"its host name is $name\" ;; esac\n" +
-		"fi\n" +
-		"[ -z \"$console\" ] || refuse \"this machine looks like a console: $console. Consoles are set up by the fleet console, not by this script; nothing was changed.\"\n" +
+		"[ -z \"$why\" ] || refuse \"this machine's root file system is in memory ($why): an install would not survive a restart: use the RAM-only starter (potluck-starter.sh) instead. Nothing was changed.\"\n" +
 		"# The machine that runs the scheduler: Potluck's address is one of its own.\n" +
 		"case $potluck_addr in\n" +
 		"\tlocalhost|127.*|::1) refuse \"this machine runs the Potluck scheduler (Potluck is at $potluck); install the agent on another machine. Nothing was changed.\" ;;\n" +
@@ -532,18 +520,19 @@ func installScriptText(z PendingZone, host string) string {
 }
 
 // installCommand is the line the Create dialog shows. It never carries
-// consoleOverrideFlag.
+// oldOverrideFlag.
 func installCommand(z PendingZone, host string) string {
 	// No -f: a zone Potluck no longer has answers 404 or 410 with a script
 	// that says so (scriptRefusal), which sh then prints.
 	return fmt.Sprintf("curl -sSL 'http://%s/install.sh?zone=%s' | sudo sh", host, z.ID)
 }
 
-// consoleOverrideFlag lets the script run on a machine whose host name
-// starts with ps5- but that carries none of the console markers. Named in
-// the runbook only; the dialog never prints it, and it does not override a
-// marker.
-const consoleOverrideFlag = "--not-a-console"
+// oldOverrideFlag skipped a host-name check that build-92 removed (the
+// script refuses only for properties of the machine now). A command copied
+// from an older runbook may still carry it, so for one release the script
+// accepts it and ignores it, and does not pass it on to potluck-agent-setup.
+// Remove after build-92's successor.
+const oldOverrideFlag = "--not-a-console"
 
 func (s *Server) installSetup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")

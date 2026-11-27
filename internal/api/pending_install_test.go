@@ -135,28 +135,41 @@ func TestInstallScript_PrintsItsPlanFirst(t *testing.T) {
 	}
 }
 
-// Condition 5: it refuses on a console and on the scheduler's machine,
-// before downloading anything.
-func TestInstallScript_RefusesConsoleAndSchedulerMachine(t *testing.T) {
+// The refusal sentences of the install script (build-92: generic). They
+// name a property of the machine, never a brand or a "console".
+const (
+	refuseStarter = "this machine is set up by the Potluck starter (it has /etc/potluck/starter.env): use the starter (potluck-starter.sh), not this script. Nothing was changed."
+	refuseInRAM   = "an install would not survive a restart: use the RAM-only starter (potluck-starter.sh) instead. Nothing was changed."
+)
+
+// Condition 5: it refuses on a machine set up by the Potluck starter, on a
+// machine whose root file system is in memory, and on the scheduler's
+// machine, before downloading anything. Nothing else is a reason: a plain
+// machine is never refused for its host name, its GPU or its unit names.
+func TestInstallScript_RefusesStarterRAMAndSchedulerMachine(t *testing.T) {
 	script := installScriptText(testPendingZone(), "192.0.2.10:3122")
-	console := "Consoles are set up by the fleet console"
 	cases := []struct {
 		name string
 		m    fakeMachine
 		want string
 	}{
-		{"starter settings", fakeMachine{addrs: []string{"192.0.2.21"}, mounts: diskMounts, files: []string{"etc/potluck/starter.env"}}, console},
-		{"root in memory", fakeMachine{addrs: []string{"192.0.2.21"}, mounts: "none / tmpfs rw 0 0\n"}, console},
-		{"console GPU", fakeMachine{addrs: []string{"192.0.2.21"}, mounts: diskMounts, lspci: "03:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Oberon"}, console},
-		{"scheduler address", fakeMachine{addrs: []string{"192.0.2.21", "192.0.2.10"}, mounts: diskMounts}, "runs the Potluck scheduler"},
+		// the starter settings, on a disk machine with any host name
+		{"starter settings", fakeMachine{addrs: []string{"192.0.2.21"}, mounts: diskMounts, host: "box-7", files: []string{"etc/potluck/starter.env"}}, refuseStarter},
+		{"root in memory (tmpfs)", fakeMachine{addrs: []string{"192.0.2.21"}, mounts: "none / tmpfs rw 0 0\n"}, "this machine's root file system is in memory (tmpfs): " + refuseInRAM},
+		{"root in memory (ramfs)", fakeMachine{addrs: []string{"192.0.2.21"}, mounts: "none / ramfs rw 0 0\n"}, "this machine's root file system is in memory (ramfs): " + refuseInRAM},
+		{"scheduler address", fakeMachine{addrs: []string{"192.0.2.21", "192.0.2.10"}, mounts: diskMounts}, "this machine runs the Potluck scheduler (it has Potluck's address 192.0.2.10)"},
 	}
 	for _, c := range cases {
 		out, ok := installRun(t, script, c.m)
-		if ok || !strings.Contains(out, c.want) || strings.Contains(out, "CURL") || strings.Contains(out, "SETUP") {
+		t.Logf("%s: the script answers: %s", c.name, strings.TrimSpace(out))
+		if ok || !strings.Contains(out, "potluck: "+c.want) || strings.Contains(out, "CURL") || strings.Contains(out, "SETUP") {
 			t.Errorf("%s: ok %v:\n%s", c.name, ok, out)
 		}
+		if generic := regexp.MustCompile(`(?i)console|playstation|ps5|oberon`); generic.MatchString(out) {
+			t.Errorf("%s: the refusal names a brand or a console:\n%s", c.name, out)
+		}
 	}
-	// A disk machine whose older kernel lists rootfs for / first is not a console.
+	// A disk machine whose older kernel lists rootfs for / first is not in memory.
 	if out, ok := installRun(t, script, fakeMachine{addrs: []string{"192.0.2.21"}, mounts: "rootfs / rootfs rw 0 0\n" + diskMounts}); !ok {
 		t.Errorf("rootfs line refused:\n%s", out)
 	}
@@ -253,42 +266,35 @@ func TestPendingZone_CountedNowhere(t *testing.T) {
 	}
 }
 
-// Condition 5, the fleet console's markers: each one alone makes the
-// script refuse, with or without the override; a host name starting with
-// ps5- refuses unless the override flag (named in the runbook only, never
-// in the dialog's command) is given.
-func TestInstallScript_ConsoleMarkersAndHostName(t *testing.T) {
+// Condition 5, nothing brand-specific: a plain machine with a host name
+// starting with ps5-, a unit named node-agent.service (or ps5-bootstrap.timer),
+// a payload version file and a GPU whose name says Oberon, on an ext4 root
+// and without the starter settings, installs like any other machine.
+// --not-a-console (the old override of the host-name check) is accepted and
+// ignored for one release: no error, and it is not passed to the setup.
+func TestInstallScript_PlainMachineNeverRefusedForNames(t *testing.T) {
 	z := testPendingZone()
 	script := installScriptText(z, "192.0.2.10:3122")
-	if strings.Contains(installCommand(z, "192.0.2.10:3122"), consoleOverrideFlag) || strings.Contains(script, "# "+consoleOverrideFlag) {
-		t.Fatal("the dialog's command or the script's header names the override")
+	plain := fakeMachine{addrs: []string{"192.0.2.21"}, mounts: diskMounts, host: "ps5-example",
+		lspci: "03:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Oberon",
+		files: []string{"etc/systemd/system/node-agent.service", "run/systemd/transient/node-agent.service",
+			"etc/systemd/system/ps5-bootstrap.timer", "etc/node-payload-version"}}
+	out, ok := installRun(t, script, plain, "--no-firewall")
+	t.Logf("plain machine: the script answers:\n%s", out)
+	if !ok || !strings.Contains(out, "SETUP --bare --potluck 192.0.2.10:3122 --model-source share:192.0.2.10:/srv/models --name zone-9 --no-firewall") {
+		t.Fatalf("plain machine refused: ok %v\n%s", ok, out)
 	}
-	console := "Consoles are set up by the fleet console"
-	base := func() fakeMachine { return fakeMachine{addrs: []string{"192.0.2.21"}, mounts: diskMounts} }
-	for _, f := range []string{"etc/potluck/starter.env", "etc/node-payload-version",
-		"etc/systemd/system/ps5-bootstrap.timer", "lib/systemd/system/ps5-bootstrap.timer", "usr/lib/systemd/system/ps5-bootstrap.timer", "run/systemd/system/ps5-bootstrap.timer",
-		"etc/systemd/system/node-agent.service", "usr/lib/systemd/system/node-agent.service", "run/systemd/transient/node-agent.service"} {
-		m := base()
-		m.files = []string{f}
-		for _, args := range [][]string{nil, {consoleOverrideFlag}} {
-			out, ok := installRun(t, script, m, args...)
-			if ok || !strings.Contains(out, console) || strings.Contains(out, "CURL") {
-				t.Errorf("%s %v: ok %v\n%s", f, args, ok, out)
-			}
-		}
+	if strings.Contains(installCommand(z, "192.0.2.10:3122"), oldOverrideFlag) || strings.Contains(script, "# "+oldOverrideFlag) {
+		t.Fatal("the dialog's command or the script's header names the old override")
 	}
-	m := base()
-	m.host = "ps5-example"
-	if out, ok := installRun(t, script, m); ok || !strings.Contains(out, console) || !strings.Contains(out, "ps5-example") || strings.Contains(out, "CURL") {
-		t.Errorf("host name: ok %v\n%s", ok, out)
+	out, ok = installRun(t, script, plain, oldOverrideFlag, "--no-firewall")
+	if !ok || strings.Contains(out, "SETUP --bare --potluck 192.0.2.10:3122 --model-source share:192.0.2.10:/srv/models --name zone-9 "+oldOverrideFlag) ||
+		!strings.Contains(out, "--name zone-9 --no-firewall") || strings.Contains(out, "SETUP") && strings.Contains(out[strings.Index(out, "SETUP"):], oldOverrideFlag) {
+		t.Errorf("the old override: ok %v\n%s", ok, out)
 	}
-	out, ok := installRun(t, script, m, consoleOverrideFlag, "--no-firewall")
-	if !ok || !strings.Contains(out, "SETUP --bare") || strings.Contains(out, "SETUP --bare --potluck 192.0.2.10:3122 --model-source share:192.0.2.10:/srv/models --name zone-9 "+consoleOverrideFlag) ||
-		!strings.Contains(out, "--name zone-9 --no-firewall") {
-		t.Errorf("host name with the override: ok %v\n%s", ok, out)
-	}
-	m.host = "rack-ps5-1"
-	if out, ok := installRun(t, script, m); !ok {
-		t.Errorf("ps5 inside the name refused:\n%s", out)
+	// the old override does not lift a real refusal
+	inRAM := fakeMachine{addrs: []string{"192.0.2.21"}, mounts: "none / tmpfs rw 0 0\n"}
+	if out, ok := installRun(t, script, inRAM, oldOverrideFlag); ok || !strings.Contains(out, refuseInRAM) || strings.Contains(out, "CURL") {
+		t.Errorf("tmpfs with the old override: ok %v\n%s", ok, out)
 	}
 }
